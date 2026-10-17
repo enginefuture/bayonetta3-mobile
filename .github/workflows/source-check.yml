@@ -19,7 +19,19 @@ jobs:
       - name: Synthetic C regressions
         run: |
           mkdir -p work
-          for name in hle nvn55 nvn55_objects descriptors program_bind; do
+          for name in nvn55 nvn55_objects descriptors program_bind; do
             cc -std=gnu11 -Wall -Wextra -Wno-unused-function -Ithird_party/blade2-mobile/dm/gfx/nvn/include "tests/test_${name}.c" -o "work/test-${name}"
             "work/test-${name}"
           done
+  darwin-service-abi:
+    # HLE registration uses Mach-O sections, so this test needs Apple's assembler.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Native service buffer canaries
+        run: |
+          mkdir -p work
+          clang -Wall -Wextra -Wno-unused-function tests/test_hle.c -o work/test-hle
+          ./work/test-hle
