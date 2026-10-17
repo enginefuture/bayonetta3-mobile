@@ -1,6 +1,10 @@
 // Targeted NVN 55.12 adapters. SDK function ABI/record layouts are recorded in
 // work/analysis; deferred references are materialized only by QueueSubmitCommands.
 #if DM_BAYONETTA3
+NVN(nvnCommandBufferSetPatchSize,void,NVNcommandBuffer *c,int size){
+    if(size<1||size>32)die("NVN patch size out of range: %d",size);
+    *(uint32_t *)REC(c,OP_PATCH_SIZE,uint32_t)=(uint32_t)size;
+}
 static void nvn55_multi_draw(NVNcommandBuffer *c,int primitive,int type,uint64_t indices,uint64_t args,uint64_t count,int maximum,ptrdiff_t stride){
     int bytes=type<0?16:20;
     if(maximum<0 || maximum>65535 || (type!=-1 && type!=1 && type!=2) || stride<0 || stride>INT32_MAX || (stride && (stride<bytes || (stride&3))) || (maximum && (!args || !count || (args&3) || (count&3))))die("invalid MultiDrawIndirectCount parameters");

@@ -1,6 +1,38 @@
 # 实测状态（2026-10-17）
 
-目标为本机 Bayonetta 3 1.2.0、Program ID `01004a4010fea000`。优先完成 Mac 实际运行，再推进 iOS 真机。**Mac 实时战斗及新场景切换已实测，优化开关对照约 18 → 60 FPS，用户确认画面和帧率正常；完整关卡稳定性及 iOS 真机尚未验收。**
+## 最新版本：单 App 启动设置与手机支持（2026-10-17）
+
+原包名覆盖升级，保留自有游戏资源和手机存档；只安装一个 Bayonetta 3 App，开发测试 Runner 已卸载且目标已移除。启动页参考 Mush8 的原生 Play＋设置布局，提供正常/宽屏、Metal HUD 和 MetalFX 独立开关，NSUserDefaults 保存选择。点击开始后才查询 Metal 设备并装载游戏，避免 HUD/模式设置晚于初始化。
+
+正常与宽屏主模块以两个不可变签名段内嵌同一可执行文件，预装载前选择映像；主模块身份、重定位和门表保持原样，不在 iOS 运行时改代码页。实际已核对 Mach-O 两套完整映像字节及哈希：正常与原始 verified rewrite 一致，宽屏与独立 LLVM/Unicorn 配置结果一致。Mac 宿主增量构建、50 项 Python 与 C 回归通过；开发签名构建已覆盖安装。
+
+真机证据：`work/ios-device/launcher-prestart-boot.txt` 显示点击开始前未进入客体；`launcher-normal-final-boot.txt` 记录 normal / HUD off / MetalFX off、选择原始 main 和 1280×720 裁切；`launcher-normal-boot.txt` 实际记录 wide / HUD off / MetalFX spatial、选择 mainwide 和 1568×720 裁切。用户确认 HUD 隐藏、正常模式启动，随后反馈当前均正常。原生设置页已在 iPhone Air 横屏截图检查；iPad、较大 Dynamic Type 和完整 VoiceOver 流程尚未验收。自动化 XCTest 因系统认证取消未执行成功，不能作为通过证据。
+
+已实测手机为 iPhone Air（A19 Pro GPU、iOS 27.2）。工程最低目标 iOS 26 不代表其他型号已支持；大量特效掉帧、完整章节、长时间温控和全部生命周期仍待验证。公开仓库只包含源码与教程，不发布 NSP、密钥、游戏缓存或含游戏程序的 App/IPA。
+
+The existing app now has a persisted Normal/Wide choice and independent Metal HUD/MetalFX switches before Play. Both immutable signed images are contained in one executable and selected before guest preload; the original bundle is upgraded in place. Actual device logs confirm original and wide image/crop selection, and the user confirmed normal operation. The verified phone is iPhone Air on iOS 27.2; other phones, tablets and complete chapter/thermal/lifecycle coverage remain unverified. The canceled XCTest attempt is not a passing test result. Source and tutorials only are published.
+
+以下记录为前序真机与图形验证证据；若启动选项说明与本节不同，以本节及 [IOS.md](IOS.md) 为准。
+
+## 最新进展：iOS 真机战斗、音频与实验性真宽屏（2026-10-17）
+
+Mac 最近的 mip/cube、两份 subgroup TES 和 115 份 ROM 着色器补齐后，用户反馈暂未发现错误。当前完整普通链为 `3dc04cc356e3`：6408 基础阶段（2045 VS / 4285 PS / 78 CS）+ 860 片元变体，另有 36 份细分库（25 VS 计算候选 / 5 TCS / 6 TES），无已知阶段编译失败。全部 2045 个原始 VS 和 6 个 TES 的完整 varying 管线创建通过；新增 subgroup GPU 验证含 106 个 lane 读数、42 个非连续活跃 lane 和 1827 次真实 TES 执行。mip/cube 独立 CPU/Metal 上传及区域写入回读通过，静态纹理尺寸不一致从 459 降为 1（另 19 份未解释 level 字段仍排除）。Mac 实际继续进入战斗，最近帧窗口中位数约 16.67 ms；用户确认当前无错误，不代表全流程验收。
+
+已为连接的 iPhone Air（iOS 27.2 / Apple A19 Pro GPU）完成当前 Release 开发签名、两项内存权限和完整资源传输：552 份 RomFS 文件及 474 份 AVC 影片逐文件长度核对通过，已有手机存档保留。7268 份普通库/变体和 36 份细分库全部由 iPhoneOS 编译。实际进入战斗，用户确认真机正常画面；随后补齐 AudioOut 初始化 Playback 会话，用户确认声音已恢复。新版本将会话初始化串行到主线程，实际输出为 Speaker / 48 kHz / 5.3 ms 缓冲。
+
+新增可选 `--widescreen`：1568×720 同步场景/深度/HDR/AO/输出、固定 DRS、主相机宽高和 HUD 逻辑尺寸，保持纵向 FOV 并扩大横向视野。原始 rewrite 和 Mac 固定 1080p 配置保持独立。首版真机在预建未使用 DRS 档位时失败：旧 1600×896 别名大于新基础纹理，初始化返回失败后清理未初始化对象而退出。现已将所有预建档位的超限维度收敛到基础纹理范围，保留较小原值，修正版已越过该点、显示主菜单并再次进入战斗。原始采样帧确认 1568×720 实时人物/敌人/特效及游戏 HUD，左右都有场景内容；用户随后确认“全屏正常，HUD 正常”；其他场景、安全区域和过场相机仍需继续覆盖。
+
+手机 MetalFX 使用实际源与原生 drawable，当前宽屏为 1568×720 → 2736×1256，再呈现到 2736×1260（宽度按 32 对齐的约 0.29% 取整差由原有呈现层吸收）。默认无宽屏配置仍为原生掌机 1280×720 → 2240×1260，保留侧边黑边。帧生成关闭，不分配 Mac 固定 4K 输出。宽屏菜单约 16.6–16.7 ms，当前含大量特效的战斗窗口约 27–48 ms；不宣称手机稳定 60 FPS。完整关卡、温控和长时间运行仍需测试。私有证据：`work/ios-device/boot-wide-v2-3.txt`、`raw-wide-v2-600.png`、`raw-wide-v2-3600-late.png`，所有内容留在被忽略目录。
+
+最新日志已持续到第 7200 帧（约 166 秒），当时该进程仍在运行，未见新的致命退出；最后 300 帧中位数 17.14 ms、GPU 9.38 ms、footprint 2418 MiB。期间热状态升到 1。启动第 2 帧曾记录一次 Metal 4 上屏缓冲被 GPU recovery 丢弃（InnocentVictim），之后继续正常呈现；该启动警告尚未确定根因，不能将本轮记录描述为零 GPU 错误。
+
+验证：50 项 Python 回归及 C 回归通过，Mac 宿主增量构建通过；宽屏合成配置经 LLVM 解码和 Unicorn 实际指令、DRS 路径、原相机 setter / 投影除法验证。全部 253 组允许尺寸、16 个预建档位、全/半尺寸和 5 种颜色/深度格式的生产纹理布局均不超过基础存储。签名安装与当前战斗采样已验证，不等于全流程稳定性。
+
+The development-signed iPhoneOS build with both memory entitlements now runs actual combat on the connected iPhone Air. The user confirmed normal visuals and restored sound after the AudioOut Playback-session fix. All private RomFS/movie files were transferred and checked without replacing device saves. The optional guarded 1568×720 profile expands primary-camera horizontal FOV while preserving vertical FOV and existing UI normalization. A real boot failure exposed preinitialized inactive DRS aliases larger than the resized base; bounding every bank resolves that failure, and the corrected build reaches menus and combat. Native MetalFX output is 2736×1256 on the 2736×1260 display. The user confirmed full-screen presentation and normal HUD on the device. Full scene/cutscene coverage and sustained thermal/performance testing remain pending; observed effect-heavy windows do not establish stable 60 FPS. All game-derived evidence remains private.
+
+以下为历史诊断与验证记录，旧链号和未实现清单以本节最新状态为准。
+
+目标为本机 Bayonetta 3 1.2.0、Program ID `01004a4010fea000`。此前 Mac 实时战斗、新场景及约 60 FPS 已由用户确认。**现已实现实际 VS/TCS/TES 与 Metal 曲面细分，用户确认越过最新退出点，固定 1080p + MetalFX spatial 4K 下新场景画面正常。仍有两份 subgroup TES、更多阶段组合和绘制模式待适配；完整关卡及 iOS 真机尚未验收。帧生成保持默认关闭。**
 
 | 阶段 | 证据与结果 |
 |---|---|
@@ -13,6 +45,52 @@
 | 输入 | 原生 NSEvent → 宿主 Npad → 游戏，已观察标题进入主菜单及后续页面 |
 | 实时 3D 场景 | 严格模式已显示实时人物/敌人/特效，用户确认战斗可操作及优化后约 60 FPS；完整关卡待验收 |
 | iOS | 此前 iPhoneOS 未签名构建通过，507 基础着色器 + 95 变体已打包；最新 Mac 统一链尚未重新验证 iOS 构建，签名因 No Accounts / 缺描述文件失败，未安装/未真机运行 |
+
+## ROM 全盘扫描发现（本轮只读分析）
+
+72 个 PKZ 的 18,732 个成员已全部展开，发现 136,520 条叶资源记录；与当前采集逐字节核对后，已识别 ROM 着色器共 6,419 份，另有 115 份（38 VS / 73 PS / 4 CS）尚未纳入正式缓存，但独立离线 Metal 编译均通过。5 条旧格式记录未解释；已捕获的 5 TCS / 6 TES 覆盖全盘已识别细分资源，其中两份 subgroup TES 仍失败。
+
+新增布局风险：44,456 条 XT1 纹理记录中，排除 19 条未解释 level 字段后，当前大小算法与 459 条声明值不同。私有实验补足“小 mip 宽度必须容纳完整横向 tile”的判定，457 条恢复一致；剩余 cube 面间距和一份资源头差异待确认。**这轮没有修改正式渲染或安装新缓存；尺寸实验不代表像素验收。** 详情和优先顺序见 [ROM_AUDIT.md](ROM_AUDIT.md)。
+
+## 最新结算紫块 / 烟雾修复通过（15:39）
+
+用户连续两张结算截图显示纯紫色矩形/三角块及烟雾瑕疵。实际诊断运行 `work/run/log/native-20261017-150545-10744.log` 第 9885 帧记录绘制与资源，355 张已绑定 ASTC 纹理的独立 GPU 扫描发现一批 6×6 纹理有同样约 78,336 个纯紫像素。随后 `native-20261017-151849-24847.log` 第 7039 帧同时保存原始池数据、描述符和 GPU 上传块；CPU 解排布与 GPU 数据逐字节一致，说明只切换 CPU 上传不能解决。
+
+根因为预排布布局第 1 字节的横向 GOB 对齐被忽略；此前只使用第 0 字节块高。1024/1026 的 6×6 ASTC 实际每行使用 48 个 GOB，密集布局只算 43，读到填充零块并使后续块行错位。Arm 独立解码器对其中一份原始数据报告 2,183 个无效块，修正横向取址后为零。CPU / GPU 上传、mip 偏移与存储大小、区域写入均已统一；较小 mip 按完整稀疏 tile 条件切回密集行，未带该参数的纹理保持原结果。36 字节描述符 ABI 未改变。没有重绘素材或屏蔽烟雾。
+
+新增生产 GPU fixture 独立填入已知 ASTC 常量块：验证 1024/1026 非整块边缘、三级 mip、区域写入及真正 Metal 4 上传，旧布局负对照必须重现 2,183 块错误。`make test` 37 项 Python 和 C 回归、完整 `make test-gpu` 通过。原有细分六例及 MetalFX GPU 合成测试继续通过。诊断增加显式一帧取样入口，原始/上传块保存有大小和数量上限；普通运行不采集。
+
+实际修复运行 `work/run/log/native-20261017-153900-55634.log`，1080p、MetalFX spatial 4K、HUD 开启，帧生成关闭，严格缓存检查。第 7250 帧保存修复后的实际战斗图像及四份 6×6 纹理；全部 mip 经独立块解析均为零无效块，其中一份包含十级 mip。用户随后确认“紫色块消失，烟雾正常”。该会话持续 198.83 秒并以 0 / normal_exit 正常退出，无 FATAL。最近三个 300 帧窗口中位时间 16.68 / 16.71 / 16.66 ms；这不是固定负载 A/B 性能测试。结算专项通过，其他地形噪点、发丝/透明材质仍需分别复测，不能宣布所有画面瑕疵消失。
+
+The results-screen magenta blocks and smoke corruption were caused by an ignored horizontal alignment in packaged ASTC storage. CPU/GPU/mip/region paths now share the corrected addressing; independent decoding and production GPU fixtures pass. The user confirmed that the blocks disappeared and smoke became normal. The 198.83-second strict native run exited normally. Further material and terrain artifacts remain separate validation work.
+
+## 先前续玩通过：原始 TCS/TES 与 Metal 曲面细分（14:48 起）
+
+诊断版 `work/run/log/native-20261017-142840-38510.log` 精确采到：VS `bba68deacd13eb71`、FS `03c70a4aa5d29186`、TCS `5c35421616074e20`、TES `6d536748a931bb27`；patch size 3、32 位索引数 72、实例数 7、视口 520×360，为阴影阶段。没有用省略绘制解决。
+
+新增 `tools/build_tessellation.py` / `tessellation_shaders.py` 离线补充库，复用固定的原始指令翻译器并规范阶段接口。原始 VS 计算捕获 → TCS 控制点/因子 → Metal 硬件细分器 → 原始 TES/FS，使用 Metal 3 岛与 Metal 4 双向 shared-event 顺序及完成检查；保留索引、实例、附件视图与深度/模板/alpha 状态。补充库独立源码/内容哈希回执与启动预检，普通链仍为 `b992212dbb71`。全部 5 TCS、4 TES 加 1 VS 编译成功；另 2 TES 的 subgroup shuffle/lane 操作被 SPIRV-Cross 明确拒绝，未伪造结果。
+
+实际修复运行 `work/run/log/native-20261017-144844-59194.log`：固定 1080p、MetalFX spatial 4K、HUD/性能记录开启、帧生成关闭、严格缓存检查。第 2380 帧首次细分完成（24 patches × 7 instances），原退出阶段不再中止；第 14400 帧已累计 8892 次实际细分绘制。用户确认“已进入，画面正常”。该运行持续 246.26 秒，最终 returncode=0 / normal_exit，无 FATAL。帧 6000 的 300 帧窗口：中位帧时间 16.67 ms，GPU 6.04 ms，上屏 p99 16.67 ms；帧 8400 中位 16.74 ms、上屏 p99 16.67 ms。该 GPU 栏不包含独立细分岛，后者另报常见约 0.1 ms/次；不能把两个时间口径混用。这不是完整关卡验收；测试/编译会竞争本机资源，不能用于精确性能比较。独立汇总 `work/run/tessellation-scene-validation-20261017.json` 保存实际会话配置、日志/宿主哈希、完成记录和用户确认，明确区分随后边界加固版本。
+
+生产路径 GPU 回归覆盖 16/32 位索引、base vertex、数组 first vertex、两实例与 base instance=5、divisor=2 的四实例属性、非实例化记录的实例数 0、空 scissor。颜色和 TES 曲面位移后的深度均实际回读，并验证返回 Metal 4 后可读取同一图像。实例属性独立普通 Metal 顶点管线对照为 `base + floor(localInstance/divisor)`，不能错误地将 base 一起除以 divisor。新增合成接口/回执损坏检查与新退出分类；启动会话记录细分回执哈希、已覆盖组合及未支持键。源码边界加固后另行构建，不自动打断用户当前运行。
+
+当前已知未解决项：TES `17f64cbfcdb0f91f` / `a2d16cf672285e87` 的 subgroup 指令；未采到的 VS 组合、依赖 vertex ID 的索引 VS、其他 patch/domain/partition 配置、TCS 跨调用 barrier、间接 patch、无附件 patch 等保留明确失败。细分岛逐绘制等待完成，后续若大量使用需优化提交批量化。当前测试不证明这些路径，也不证明全游戏不会退出。
+
+最终 Mac 源码构建通过；`make test` 的 37 项 Python 及 C 回归通过。生产细分六例与原有 GPU 功能回归通过，包含独立 MetalFX spatial/光流/插帧合成回读；这些合成插帧结果不等于游戏插帧验收。当前工作源码（含未暂存新增文件）978 个文件的路径/内容审计通过，未包含 NSP、原始/生成游戏着色器或其他二进制。没有在本轮提交或推送。
+
+The original VS/TCS/Metal tessellator/TES path now executes the previously failing continuation. The user confirmed entry and normal visuals with fixed 1080p and spatial 4K. One original stage combination is proven in-game; five TCS and four TES compile, while two subgroup TES remain unsupported. Synthetic GPU cases validate indexing, vertex/instance offsets and divisors, empty scissor, and displaced depth across the Metal 3/4 boundary. Further scene coverage and iOS remain pending.
+
+### 修复前的退出诊断与分辨率对照（历史证据）
+
+严格运行 `work/run/log/native-20261017-141137-17967.log`（固定 1080p + MetalFX spatial）与 `native-20261017-141302-19993.log`（原始 900p + MetalFX off），均在进入当前新场景时以 -6 / SIGABRT 中止，完全相同的首个错误为 `NVN tessellation patch draw unsupported: patch_size=3 TCS=5c35421616074e20 TES=6d536748a931bb27`。两次帧生成均关闭，独立对照回执为 `work/run/tessellation-ab-20261017.json`。这证实该次退出不依赖分辨率覆盖或 MetalFX。它是宿主对未实现绘制的主动拒绝，没有驱动 GPU fault 或内存耗尽的错误证据。
+
+此前原始分辨率运行 `native-20261017-134857-47267.log` 先停在 `nvnCommandBufferSetPatchSize(3)`。第一步正确记录状态、前瞻保留 TCS/TES 身份，但当时尚无阶段执行；随后以上述原始阶段翻译与真实细分路径解决。
+
+分辨率对照中，用户确认原始 900p 无整屏闪黑、1080p 即使关闭 MetalFX 仍闪。检查发现原方案扩大深度表后，动态选择的 HDR/AO 仍可能保留 1600×896。现配置固定 DRS bank 0，并同步该档 HDR/AO/深度及输出为 1920×1080；其半分辨率目标为 960×540。36 处指令经独立 LLVM 解码，实际选择函数经 Unicorn 1,024 组设置测试，两档选择均为零；配置另有逐字节保护和寄存器/flags 测试。实际帧 1800 证实尺寸一致，细分修复后用户确认当前新场景画面正常；长期闪黑专项复测与更多场景仍待验证。原始离线改写不被覆盖，版本/哈希保护保留。
+
+窗口全屏和 HUD 开关先前已通过真实 AppKit 操作；新增项目自绘 SVG 标志，`make mac` 在私有目录生成图标。MetalFX spatial 的真实 GPU 灰阶/三槽复用测试及实验光流/插帧合成测试通过；真实游戏帧生成、120 Hz 双呈现节拍和画质仍未验收。见 [图形实现说明](GRAPHICS.md)。普通缓存链为 `b992212dbb71`，2007 VS / 4212 基础 FS + 830 FS 变体；新增细分库独立校验。
+
+Before the tessellation implementation, fixed 1080p with MetalFX and original 900p without it reproduced the identical explicit TCS/TES rejection. The new path passes that continuation. The coherent 1080p configuration now has structural, runtime-size and user visual evidence for the current scene; long-term flashing checks and further scenes remain pending. Game frame generation remains experimental and unverified.
 
 ## 当前 Mac 状态：性能与统一接口跨场景复测通过
 
@@ -96,7 +174,7 @@ In-process ON → OFF → ON testing measured approximately 60 → 18 → 60 FPS
 - 修复 ProgramSetShaders 控制段/代码的生命周期；新增 deferred 绑定在提交时冻结数组、GPU buffer clear、GPU 间接绘制、alpha-test、深度 clamp、纹理 swizzle 和区域写入等。详细语义/拒绝路径见 NVN55.md。
 - 新 SDK 的 AudioOut 重载、缓冲事件、设备增益、触屏快照、pushed user、保存目录查询均接入宿主语义；离线 PREPO 返回不可用。CoreAudio 已创建，实际声音尚未验收。
 - 捕获旧文件 `4b9d39d6e030c3e6.code` 曾为 0 字节，导致误判计算着色器及翻译失败。已原子发布采集、检查配对长度并重捕获为 1792 字节图形代码；打包前严格校验，拒绝截断输入。
-- 已捕获约 6300 份着色器。11 个细分阶段（TCS/TES）明确标识为暂不支持，不能把支持阶段编译成功描述成全量支持。实际数量与清单以 `work/shpack/capture_report.json` 为准。
+- 已采集 6,304 份着色器；普通链支持 6,293 份，细分补充链另编译 5 TCS / 4 TES，2 TES 尚未通过。ROM 另有 115 份未纳入正式缓存及 5 条旧格式记录待解释，详见本轮 ROM_AUDIT。原始 capture_report 的 unsupported 表是普通打包器的阶段分类，不能当作当前补充链覆盖结果。
 - 不支持不同字节布局的纹理视图、非 COPY logic op、非 1.0 线宽、启用有损 color reduction；调用会明确失败。复杂纹理别名、完整驱动常量和所有阶段仍需实际关卡验证。
 
 ## 改写与回归

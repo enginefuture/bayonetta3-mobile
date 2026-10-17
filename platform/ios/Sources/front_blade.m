@@ -19,6 +19,8 @@
 #include "dm_input.h"
 #include "front.h"
 #include "hle.h"
+#import <MetalFX/MetalFX.h>
+#include <os/proc.h>
 
 static CAMetalLayer *g_layer;
 
@@ -107,6 +109,7 @@ typedef struct { UITouch *__unsafe_unretained t; int role, btn; CGPoint c; } slo
     [super layoutSubviews];
     CAMetalLayer *l = (CAMetalLayer *)self.layer;
     l.drawableSize = CGSizeMake(self.bounds.size.width * l.contentsScale, self.bounds.size.height * l.contentsScale);
+    LOG("iOS drawable %.0fx%.0f, native-scale %.3f; game=%s, native fitted spatial upscale", l.drawableSize.width,l.drawableSize.height,l.contentsScale,getenv("DM_GAME_RES")?:"original-handheld");
     pad_layout_make(&_L, self.bounds.size, self.safeAreaInsets); [_ov setNeedsDisplay];
 }
 - (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; [self setNeedsLayout]; }
@@ -157,19 +160,28 @@ UIView *front_blade_view(CGRect bounds, CGFloat scale) {
     g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     g_layer.contentsScale = scale;
     g_layer.drawableSize = CGSizeMake(bounds.size.width * g_layer.contentsScale, bounds.size.height * g_layer.contentsScale);
-    LOG("画面：窗口 %.0fx%.0f 点，出图 %.0fx%.0f 像素（游戏渲 1280x720，按窗口拉伸）", bounds.size.width, bounds.size.height, g_layer.drawableSize.width, g_layer.drawableSize.height);
+    g_layer.maximumDrawableCount = 3;
+    LOG("iOS GPU %s; window %.0fx%.0f points; drawable %.0fx%.0f pixels; MetalFX spatial=%d; BC=%d; tessellation=%d; available-memory=%zu MiB; frame-generation=off",
+        g_layer.device.name.UTF8String,bounds.size.width,bounds.size.height,g_layer.drawableSize.width,g_layer.drawableSize.height,
+        [MTLFXSpatialScalerDescriptor supportsDevice:g_layer.device],g_layer.device.supportsBCTextureCompression,[g_layer.device supportsFamily:MTLGPUFamilyApple3],os_proc_available_memory()>>20);
+    UIApplication.sharedApplication.idleTimerDisabled = YES;
+    [NSNotificationCenter.defaultCenter addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){
+        LOG("iOS thermal-state=%ld available-memory=%zu MiB",(long)NSProcessInfo.processInfo.thermalState,os_proc_available_memory()>>20);
+    }];
+    [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){
+        LOG("iOS MEMORY WARNING available-memory=%zu MiB",os_proc_available_memory()>>20);
+    }];
     dm_gamepad_start(pad_present);
     return v;
 }
 
 void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 
-// 游戏输出分辨率：通用宿主两种模式都按 1280x720（Blade 只渲这个），DM_GAME_RES=宽x高 覆盖（同 front_mac.m 的 DM_GENERIC_HOST 分支）
-// Game output resolution: the generic host uses 1280x720 in both modes (Blade only renders this), DM_GAME_RES=WxH overrides (same as the DM_GENERIC_HOST branch of front_mac.m)
+// Boot derives this override only from the profile embedded with the image.
 uint64_t front_game_res(int docked) {
-    (void)docked; unsigned w, h; const char *e = getenv("DM_GAME_RES");
-    if (e && sscanf(e, "%ux%u", &w, &h) == 2) return (uint64_t)h << 32 | w;
-    return 720ull << 32 | 1280;
+    const char *s=getenv("DM_GAME_RES");
+    if(s && !strcmp(s,"1568x720"))return (720ull<<32)|1568;
+    return docked ? (900ull << 32 | 1600) : (720ull << 32 | 1280);
 }
 
 void front_run(void (*guest)(void)) {
@@ -224,8 +236,8 @@ void front_blade_focus(int ev) {
     LOG("前端：%s", k[ev & 3]);
     switch (ev) {
         case 0: [g_view clearAll]; dm_gamepad_reset(); dm_focus_set(2); break;   // 实体手柄按着的键一并清零（松开事件在后台收不到） | controller buttons held are zeroed too (release events do not arrive in the background)
-        case 1: dm_focus_set(3); dm_audio_suspend(1); dm_audio_session_background(1); guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); break;   // 挂起返回前在途 GPU 已清空 | in-flight GPU work is drained before the suspend returns
-        case 2: dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); dm_audio_session_background(0); dm_audio_suspend(0); dm_focus_set(2); break;
-        case 3: dm_focus_set(1); break;
+        case 1: dm_focus_set(3); dm_audio_session_background(1); guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); break;   // in-flight GPU work is drained before suspend returns
+        case 2: dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); dm_audio_session_background(0); dm_focus_set(2); break;
+        case 3: dm_audio_session_background(0); dm_focus_set(1); break;
     }
 }

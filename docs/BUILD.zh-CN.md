@@ -101,27 +101,18 @@ make mac
 
 Metal 4 路径会在已证明只读的命令段内批量准备 GPU 间接绘制参数；计数仍由 GPU 读取，保留绘制、画质与游戏逻辑。复制、上传、计算、清除、事件、查询、附件改变、未知反射及可能覆盖输入的写入都会截断批次。`--indirect-batch 0` 选择原准备路径作为对照。进程内诊断 A/B 可加 `--indirect-batch-control work/run/batch-policy.txt`，向这个本地文件写入 `0` 或 `1`；每 60 帧轮询，切换日志包含实际帧号。保持视角/场景及 HUD/探针设置一致，丢弃切换窗口，对照 `@frame_ms`、`@gpu_ms`、`@passes` 和 `@indirect_batch_*`，不要把精确探针运行与正常 FPS 运行混比。
 
-## 6. 实验性 iOS 构建
+## 6. 实验性 iOS 真机构建
 
-先完成 Mac 采集/严格运行循环，再编译已观察路径的 iPhoneOS 着色器和未签名 App：
-
-```sh
-.venv/bin/python tools/build_ios_shaders.py --jobs 8
-.venv/bin/python tools/build_ios.py --bundle-id org.example.bayonetta3mobile
-```
-
-生成 `platform/ios/Bayonetta3IOS.xcodeproj`，本地 App 位于 `work/ios/`。**未签名 App 不能安装。** 源码构建不证明真机兼容；本项目尚未验证签名安装及设备运行。
-
-配置自己的 Xcode 账号、开发团队、唯一 Bundle ID 和适当权限后，可以尝试本地签名：
+最新 iOS 路径、手机超分策略、完整着色器构建、签名、资源复制及日志见 **[iOS 真机说明（中英双语）](IOS.md)**。先完成以上 Mac 流程，并生成完整普通缓存和细分补充库，再执行：
 
 ```sh
+.venv/bin/python tools/build_ios_shaders.py --jobs 6
+.venv/bin/python tools/build_ios_tessellation.py
 .venv/bin/python tools/build_ios.py --sign --team-id YOUR_TEAM_ID \
-  --bundle-id YOUR_UNIQUE_BUNDLE_ID
+  --bundle-id YOUR_UNIQUE_BUNDLE_ID --device YOUR_DEVICE_UDID
 ```
 
-描述文件错误见 `work/build-ios.log`。当前外壳请求较高内存上限和扩展虚拟地址权限，账号权限及真机内存限制仍须验证。此命令只签名构建，不执行安装。**不要公开生成的 App/IPA，其中内嵌游戏程序和着色器。**
-
-后续设备实验中，外壳要求容器 `Library/Application Support/romfs` 存放完整自有 RomFS，`Documents/media` 存放影片缓存。`core_000.pkz` 是资源标记，只复制该文件不够；日志在 `Documents/boot.txt`。容器传输、签名和设备行为仍是待验证的开发工作，不是已经支持的用户安装流程。
+默认构建 Release。同一个 iOS App 现在先显示正常/宽屏选择与 Metal HUD、MetalFX 开关；构建同时嵌入两套签名映像。手机按原生屏幕超分，不沿用 Mac 固定 4K。已在 iPhone Air 验证签名安装与真实战斗；详细验证范围以 [STATUS.md](STATUS.md) 为准。未签名构建不能安装；构建成功不代表真机可玩。App/IPA 包含原始游戏衍生内容，请仅用于自己的设备，不随开源仓库发布。
 
 ## 7. 纯源码测试与发布
 

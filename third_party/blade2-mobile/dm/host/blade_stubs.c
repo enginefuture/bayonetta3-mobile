@@ -50,7 +50,19 @@ void dm_world_tap(float x, float y) { (void)x; (void)y; } void dm_world_watch(in
 int dm_world_watch_pos(float *x, float *y) { (void)x; (void)y; return 0; }
 
 // ---- 界面层（触屏）：没有 | UI layer (touch): none ----
-const char *dm_ui(const char *key) { return key; }
+const char *dm_ui(const char *key) {
+#if DM_BAYONETTA3
+    if(!strcmp(key,"dmAppQuit"))return "Quit Bayonetta 3";
+    if(!strcmp(key,"dmAppMenuView"))return "View";
+    if(!strcmp(key,"dmAppFullscreen"))return "Toggle Full Screen";
+    if(!strcmp(key,"dmAppMenuHelp"))return "Help";
+    if(!strcmp(key,"dmAppKeysTitle"))return "Controls";
+    if(!strcmp(key,"dmAppKeysText"))return "Controller: Nintendo layout. Keyboard: WASD move, J/K/U/I = A/B/X/Y, Return = +. Full screen: Control-Command-F. Performance HUD: Shift-Command-H.";
+    if(!strcmp(key,"dmAppOK"))return "OK";
+    if(!strcmp(key,"dmAppShareLog"))return "Export Logs…";
+#endif
+    return key;
+}
 void dm_ui_drag_begin(int k, float x, float y, float t) { (void)k; (void)x; (void)y; (void)t; }
 void dm_ui_drag_end(void) {} void dm_ui_drag_move(float x, float y) { (void)x; (void)y; }
 unsigned dm_ui_item_query(float x, float y) { (void)x; (void)y; return 0; }

@@ -101,6 +101,11 @@ static OSStatus au_render(void *ctx, AudioUnitRenderActionFlags *f, const AudioT
     return noErr;
 }
 static void au_open(aout *a) {
+#if TARGET_OS_IPHONE
+    // Bayonetta uses AudioOut rather than AudioRenderer. Both must establish
+    // Playback before RemoteIO initialization (default SoloAmbient honors mute).
+    void dm_audio_session_begin(void); dm_audio_session_begin();
+#endif
     AudioComponentDescription d = {.componentType = kAudioUnitType_Output,
 #if TARGET_OS_IPHONE
                                    .componentSubType = kAudioUnitSubType_RemoteIO,

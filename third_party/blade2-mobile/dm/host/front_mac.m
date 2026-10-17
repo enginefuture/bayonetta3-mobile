@@ -50,10 +50,15 @@ static NSRect game_rect(void) {
     return NSMakeRect(floor((b.width - w) / 2), floor((b.height - h) / 2), w, h);
 }
 static void layout_game(void) {
-    NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
-    [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = g_view.window.backingScaleFactor; [CATransaction commit];
+    NSRect r = game_rect();
+    [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = g_view.window.backingScaleFactor;
+    if ((getenv("DM_OUTPUT_RES") && !strcmp(getenv("DM_OUTPUT_RES"),"3840x2160")) || (getenv("DM_METALFX") && !strcmp(getenv("DM_METALFX"),"spatial"))) g_layer.drawableSize=CGSizeMake(3840,2160);
+    [CATransaction commit];
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
 }
+#if DM_BAYONETTA3
+#include "front_bayonetta3_ui.inc"
+#endif
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
 // 暂停菜单 / 大秘境面板开着时游戏停拍：先放开暂停让拍走起来；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
 // Quit (closing the window / ⌘Q / menu): if a game is in progress, first ask the game to do its own save and wait for the save to be committed (the same way the iOS shell does when going to the background), for at most 3 seconds, then shut down in order.
@@ -117,6 +122,13 @@ static void share_logs_ui(void) { NSString *e = share_logs(nil); if (e) { LOG("�
 @implementation DmWinCtl
 - (BOOL)windowShouldClose:(NSWindow *)w { (void)w; app_quit("关窗口"); return NO; }
 - (void)windowDidResize:(NSNotification *)n { (void)n; layout_game(); }
+- (void)windowDidEnterFullScreen:(NSNotification *)n { (void)n; layout_game(); LOG("[window] fullscreen entered drawable=%.0fx%.0f",g_layer.drawableSize.width,g_layer.drawableSize.height); }
+- (void)windowDidExitFullScreen:(NSNotification *)n { (void)n; layout_game(); LOG("[window] fullscreen exited drawable=%.0fx%.0f",g_layer.drawableSize.width,g_layer.drawableSize.height); }
+- (void)fullscreen:(id)sender { [g_win toggleFullScreen:sender]; }
+#if DM_BAYONETTA3
+- (void)toggleHUD:(id)sender { (void)sender; bayo_hud_visible(!g_bayo_hud_visible); }
+- (void)toggleMetalFX:(id)sender { (void)sender;void mtl_set_metalfx(int);g_bayo_fx_active=!g_bayo_fx_active;mtl_set_metalfx(g_bayo_fx_active);g_bayo_fx_menu.state=g_bayo_fx_active?NSControlStateValueOn:NSControlStateValueOff; }
+#endif
 - (void)windowDidChangeBackingProperties:(NSNotification *)n { (void)n; layout_game(); }
 - (void)quit:(id)s { (void)s; app_quit("菜单退出"); }
 - (void)keys:(id)s { (void)s; show_keys(); }
@@ -195,7 +207,7 @@ void front_run(void (*guest)(void)) {
         NSRect r = NSMakeRect(0, 0, 1280, 720);
         { const char *e = getenv("DM_WINDOW"); unsigned ww = 0, wh = 0; if (e && sscanf(e, "%ux%u", &ww, &wh) == 2 && ww >= 320 && wh >= 200) r = NSMakeRect(0, 0, ww, wh); }   // DM_WINDOW=宽x高：按指定大小开窗（复现大窗口 / 最大化时的问题） | DM_WINDOW=WxH: open the window at that size (to reproduce issues seen with a large / maximized window)
         NSWindow *win = [[NSWindow alloc] initWithContentRect:r
-                                                    styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
+                                                    styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
                                                       backing:NSBackingStoreBuffered defer:NO];
         win.title = @APP_NAME; win.restorable = NO; g_win = win;
         screen_note();   // 出图节拍按窗口所在屏的刷新率取档（30 Hz 电视 → 30） | present pacing follows the refresh rate of the screen the window is on (30 Hz TV → 30)
@@ -211,13 +223,23 @@ void front_run(void (*guest)(void)) {
         g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         g_layer.contentsScale = win.backingScaleFactor;
         [v.layer addSublayer:g_layer]; layout_game();
+#if DM_BAYONETTA3
+        bayo_window_controls(ctl);
+#endif
         [win center];
         g_live = getenv("DM_APP") || getenv("DM_TOUCH_LIVE"); if (g_live) dm_touch_host_live_enable();
         { // 菜单栏：应用（退出 ⌘Q）/ 显示（全屏 ⌃⌘F）/ 帮助（键位对照） | Menu bar: application (Quit ⌘Q) / View (Full Screen ⌃⌘F) / Help (key mapping)
           NSMenu *bar = [NSMenu new];
           NSMenu *(^add)(const char *) = ^NSMenu *(const char *t) { NSMenuItem *it = [NSMenuItem new]; [bar addItem:it]; NSMenu *m = [[NSMenu alloc] initWithTitle:@(t)]; it.submenu = m; return m; };
           [[add("") addItemWithTitle:@(ui("dmAppQuit")) action:@selector(quit:) keyEquivalent:@"q"] setTarget:ctl];
-          NSMenuItem *fs = [add(ui("dmAppMenuView")) addItemWithTitle:@(ui("dmAppFullscreen")) action:@selector(toggleFullScreen:) keyEquivalent:@"f"]; fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+          NSMenuItem *fs = [add(ui("dmAppMenuView")) addItemWithTitle:@(ui("dmAppFullscreen")) action:@selector(fullscreen:) keyEquivalent:@"f"]; fs.target=ctl; fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+#if DM_BAYONETTA3
+          g_bayo_hud_menu=[fs.menu addItemWithTitle:bayo_text(@"显示性能 HUD",@"Show Performance HUD") action:@selector(toggleHUD:) keyEquivalent:@"h"];
+          g_bayo_hud_menu.target=ctl;g_bayo_hud_menu.keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagShift;
+          g_bayo_hud_menu.state=g_bayo_hud_visible?NSControlStateValueOn:NSControlStateValueOff;
+          g_bayo_fx_active=getenv("DM_METALFX")&&!strcmp(getenv("DM_METALFX"),"spatial");
+          g_bayo_fx_menu=[fs.menu addItemWithTitle:@"MetalFX 4K" action:@selector(toggleMetalFX:) keyEquivalent:@""];g_bayo_fx_menu.target=ctl;g_bayo_fx_menu.enabled=g_bayo_fx_active;g_bayo_fx_menu.state=g_bayo_fx_active?NSControlStateValueOn:NSControlStateValueOff;
+#endif
           { NSMenu *hm = add(ui("dmAppMenuHelp")); [[hm addItemWithTitle:@(ui("dmAppKeysTitle")) action:@selector(keys:) keyEquivalent:@""] setTarget:ctl]; [[hm addItemWithTitle:@(ui("dmAppShareLog")) action:@selector(share:) keyEquivalent:@""] setTarget:ctl]; }
           NSApp.mainMenu = bar; }
         { void dm_gamepad_start(void (*on_mode)(int pad)); dm_gamepad_start(NULL); }   // 手柄（与 iOS 壳共用 ios/Sources/dm_gamepad.m）：连上即用，与键盘并存 | Gamepad (ios/Sources/dm_gamepad.m, shared with the iOS shell): works as soon as it is connected, alongside the keyboard
@@ -233,11 +255,18 @@ void front_run(void (*guest)(void)) {
         // Mouse as a single-point touchscreen (for testing touch on the local machine, front.h dm_touch_set): left button down / drag = finger 0 at the normalized coordinates, release = lifted
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;
-            if (e.type == NSEventTypeLeftMouseUp) { if (g_live) dm_touch_host_live(2, 0, 0); else dm_touch_set(NULL, 0); return nil; }
-            NSPoint p = [v convertPoint:e.locationInWindow fromView:nil]; NSRect gr = game_rect();
+            static BOOL captured;
+            NSPoint p = [v convertPoint:e.locationInWindow fromView:nil];
+            if (e.type == NSEventTypeLeftMouseDown) {
+                // Title-bar/traffic-light/accessory clicks belong to AppKit.
+                if (!NSPointInRect(p,v.bounds) || [[v hitTest:p] isKindOfClass:NSControl.class]) return e;
+                captured=YES;
+            } else if (!captured) return e;
+            if (e.type == NSEventTypeLeftMouseUp) { captured=NO; if (g_live) dm_touch_host_live(2, 0, 0); else dm_touch_set(NULL, 0); return nil; }
+            NSRect gr = game_rect();
             if (gr.size.width <= 0 || gr.size.height <= 0) return e;
             float nx = (float)((p.x - gr.origin.x) / gr.size.width), ny = (float)(1.0 - (p.y - gr.origin.y) / gr.size.height);   // AppKit 视图原点在左下，触屏原点在左上 | The AppKit view origin is at bottom left, the touchscreen origin is at top left
-            if (e.type == NSEventTypeLeftMouseDown && (nx < 0 || nx > 1 || ny < 0 || ny > 1)) return nil;   // 按在黑边上：不算点 | Pressed on the black bars: not a click
+            if (e.type == NSEventTypeLeftMouseDown && (nx < 0 || nx > 1 || ny < 0 || ny > 1)) { captured=NO; return e; }   // 按在黑边上：不算点 | Pressed on the black bars: not a click
             dm_touch t = {0, nx < 0 ? 0 : nx > 1 ? 1 : nx, ny < 0 ? 0 : ny > 1 ? 1 : ny};
             if (g_live) { dm_touch_host_live(e.type == NSEventTypeLeftMouseDown ? 0 : 1, t.x, t.y); return nil; }
             dm_touch_set(&t, 1); return nil;

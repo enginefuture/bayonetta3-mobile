@@ -77,7 +77,7 @@ static unsigned title_batch_collect(const p_multi_draw *first,const uint8_t *nex
             case OP_BIND_UBO:case OP_BIND_SSBO:case OP_BIND_TEX:case OP_BIND_SAMP:case OP_BIND_IMG:
             case OP_SET_TEX_POOL:case OP_SET_SAMP_POOL:case OP_STENCIL:case OP_POLY_OFFSET:
             case OP_VIEWPORTS:case OP_DEPTH_RANGE:case OP_BLEND_COLOR:case OP_ALPHA_REF:
-            case OP_DEPTH_CLAMP:case OP_DEPTH_BOUNDS:case OP_COPY_STRIDE:break;
+            case OP_DEPTH_CLAMP:case OP_DEPTH_BOUNDS:case OP_PATCH_SIZE:case OP_COPY_STRIDE:break;
             // Copies, uploads, clears, compute, events, queries, control flow,
             // external shader writes and unknown operations end the proof.
             default:goto done;

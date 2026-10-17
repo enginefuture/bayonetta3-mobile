@@ -10,7 +10,7 @@ rewrite:
 	$(PY) tools/rewrite.py
 verify:
 	$(PY) tools/verify.py
-mac:
+mac: icon
 	mkdir -p work
 	$(MAKE) -C $(HOST) -f Makefile.bayonetta3
 ios:
@@ -47,3 +47,12 @@ test-gpu:
 	$(PY) tests/run_attachmentless.py
 	$(PY) tests/run_gpu_profile.py
 	$(PY) tests/run_indirect_batch.py
+	$(PY) tests/run_tessellation.py
+	$(PY) tests/run_tes_subgroup.py
+	$(PY) tests/run_texture_layout.py
+	$(PY) tests/run_metalfx.py
+
+.PHONY: icon
+icon: work/build/icons/AppIcon.icns
+work/build/icons/AppIcon.icns: assets/AppIcon.svg tools/build_icon.swift
+	swift tools/build_icon.swift "$(CURDIR)"

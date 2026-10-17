@@ -11,8 +11,18 @@ static const void *emit(commands *c,int op,const void *p,size_t n){
     size_t z=(8+n+7)&~7ull;assert(c->n+z<=sizeof c->bytes);op_hdr h={op,(uint32_t)z};
     uint8_t *a=c->bytes+c->n;memcpy(a,&h,8);if(n)memcpy(a+8,p,n);c->n+=z;return a+8;
 }
-int main(void){@autoreleasepool{
+int main(int argc,const char **argv){@autoreleasepool{
+    if(argc>1 && !strcmp(argv[1],"--active-patch")){
+        state_reset();S.patch_size=3;p_draw patch={.prim=NVN_DRAW_PRIMITIVE_PATCHES,.count=3,.instances=1};draw(&patch,NULL);return 9;
+    }
     setenv("DM_NVN_INDIRECT_BATCH","1",1);mtl_init();
+    // A program containing only a bound TCS is legal to inspect before draw.
+    // It must retain its identity without fabricating an executable library.
+    uint32_t control[0x880/4]={0},tcs[0x80/4]={0};control[0]=0x98761234;control[1]=1;control[2]=16;control[8]=0x880;tcs[0]=0x12345678;tcs[0x30/4]=2<<10;
+    prog_t dormant={.serial=98999,.nstage=1};dormant.sd[0]=(NVNshaderData){.control=control,.data=(uintptr_t)tcs};
+    g_shmap=[NSMutableDictionary dictionary];NvProg *passive=prog_get(&dormant);
+    assert(passive->tesskeys[0][0] && !passive->sh[3] && !passive->sh[0]);
+    assert(prog_get(&dormant)==passive);
     assert(rt_range_bindings_ro(@{@"route":@"B",@"drv_reads":@{},@"bindings":@[@{@"kind":@"support",@"msl_type":@"constant Helper*"},@{@"kind":@"samp_tex",@"msl_type":@"sampler"}]}));
     assert(!rt_range_bindings_ro(@{@"route":@"B",@"drv_reads":@{},@"bindings":@[@{@"kind":@"support",@"msl_type":@"device Helper*"}]}));
     prog_t program={.serial=99001};NvProg *pr=[NvProg new];
@@ -65,6 +75,7 @@ int main(void){@autoreleasepool{
         const uint32_t *actual=(const uint32_t *)((uint8_t *)outputs[i].contents+offsets[i]);
         for(int d=0;d<3;d++)for(int w=0;w<words;w++)assert(actual[d*words+w]==(d<n?source[i*7+d*7+w]:0));
     }
+    uint32_t patch=3;state_op(OP_PATCH_SIZE,&patch);assert(S.patch_size==3);
     // Run the real indirect rendering path twice against a closed-form image.
     // Host-only render target; no game shader or game assets are used.
     id<MTLLibrary> graphics=[g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;vertex float4 v(uint i[[vertex_id]]){float2 p[3]={float2(-1,-1),float2(3,-1),float2(-1,3)};return float4(p[i],.5,1);}fragment float4 f(){return float4(.0625,0,0,0);}" options:nil error:&error];assert(graphics);
@@ -92,6 +103,28 @@ int main(void){@autoreleasepool{
         fprintf(stderr,"first pixel=%g counts=%u,%u,%u,%u\n",((float *)readback.contents)[0],counts[0],counts[1],counts[2],counts[3]);
         for(int pixel=0;pixel<64;pixel++)assert(((float *)readback.contents)[pixel*4]==.875f);
     }
+    // Read the production D16 array snapshot at a nonzero slice AND mip.
+    // A wrong default subresource returns .25/0 rather than the expected .75.
+    tex_t shadow={.serial=99020};shadow.d.width=128;shadow.d.height=64;shadow.d.depth=2;
+    shadow.d.samples=1;shadow.d.levels=2;shadow.d.target=NVN_TEXTURE_TARGET_2D_ARRAY;shadow.d.format=NVN_FORMAT_DEPTH16;
+    id<MTLTexture> shadow_image=tex_mtl(&shadow);assert(shadow_image.arrayLength==2);
+    id<MTLCommandBuffer> seed_depth=[g_q commandBuffer];
+    for(int slice=0;slice<2;slice++){
+        MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];pass.depthAttachment.texture=shadow_image;
+        pass.depthAttachment.level=1;pass.depthAttachment.slice=slice;pass.depthAttachment.loadAction=MTLLoadActionClear;pass.depthAttachment.storeAction=MTLStoreActionStore;pass.depthAttachment.clearDepth=slice?.75:.25;
+        id<MTLRenderCommandEncoder> en=[seed_depth renderCommandEncoderWithDescriptor:pass];[en endEncoding];
+    }
+    [seed_depth commit];[seed_depth waitUntilCompleted];assert(!seed_depth.error);
+    for(int slice=1;slice>=0;slice--){
+        state_reset();memset(&R,0,sizeof R);S.depth_bounds.enabled=1;R.has_rt=1;R.rt.depth=&shadow;R.rt.has_dview=1;
+        R.rt.dview=(view_t){.set_levels=1,.base_level=1,.nlevels=1,.set_layers=1,.min_layer=slice,.nlayers=1};g_depth_bounds_frozen=0;
+        mtl_sub_begin();title_depth_snapshot();assert(g_depth_bounds_image.width==64 && g_depth_bounds_image.height==32 && g_depth_bounds_image.pixelFormat==MTLPixelFormatR16Unorm);
+        id<MTLBuffer> rb=[g_dev newBufferWithLength:64*32*2 options:MTLResourceStorageModeShared];
+        [blit() copyFromTexture:g_depth_bounds_image sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(64,32,1) toBuffer:rb destinationOffset:0 destinationBytesPerRow:128 destinationBytesPerImage:4096];
+        assert(mtl_wait(mtl_sub_commit(),5000000000ull));assert(!mtl_last_commit_error());
+        const uint16_t *z=rb.contents;for(int i=0;i<64*32;i++)assert(abs((int)z[i]-(slice?49151:16384))<=1);
+    }
+    puts("Production D16 depth bounds: array slices 1/0, mip 1, exact normalized depth readback passed");
     mtl_pool_del(memory);free(memory);
     puts("Indirect batch: 8 GPU-written count/stride/base-ID cases, alias/write/reflection guards and replay-state isolation passed");
 }return 0;}

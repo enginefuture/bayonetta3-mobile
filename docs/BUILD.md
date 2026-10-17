@@ -101,27 +101,18 @@ Optional `--gpu-profile --gpu-profile-every 60` records sampled Metal 4 render/c
 
 The Metal 4 path batches GPU indirect-count preparation across proven read-only command segments. Counts remain GPU-resident; draws, graphics quality and game logic are preserved. Copies, uploads, compute, clears, events, queries, attachment changes, unknown reflection and possible input aliases end a batch. `--indirect-batch 0` selects the original preparation path for comparison. For a same-process diagnostic A/B, pass `--indirect-batch-control work/run/batch-policy.txt`; write `0` or `1` to that local file. It is polled every 60 frames, and changes are logged with a frame number. Keep camera/scene and HUD/probe settings the same, discard transition windows, and compare `@frame_ms`, `@gpu_ms`, `@passes` and `@indirect_batch_*` metrics. Do not compare a precise-probe run with a normal FPS run.
 
-## 6. Experimental iOS builds
+## 6. Experimental iOS device builds
 
-Only proceed after completing the Mac capture/strict-run cycle. Compile the observed-path iPhoneOS shaders and make an unsigned build:
-
-```sh
-.venv/bin/python tools/build_ios_shaders.py --jobs 8
-.venv/bin/python tools/build_ios.py --bundle-id org.example.bayonetta3mobile
-```
-
-This generates `platform/ios/Bayonetta3IOS.xcodeproj` and a local App under `work/ios/`. **Unsigned apps cannot be installed.** Source builds do not prove compatibility on a device. Signing/install and on-device gameplay have not been verified for this project.
-
-With your own Xcode account, development team, unique bundle identifier and appropriate entitlements, you can attempt a local signed build:
+See **[iOS device notes (English / 中文)](IOS.md)** for mobile scaling, complete shader builds, provisioning, private asset transfer and diagnostics. Complete the Mac workflow and build the full ordinary and tessellation caches first:
 
 ```sh
+.venv/bin/python tools/build_ios_shaders.py --jobs 6
+.venv/bin/python tools/build_ios_tessellation.py
 .venv/bin/python tools/build_ios.py --sign --team-id YOUR_TEAM_ID \
-  --bundle-id YOUR_UNIQUE_BUNDLE_ID
+  --bundle-id YOUR_UNIQUE_BUNDLE_ID --device YOUR_DEVICE_UDID
 ```
 
-Inspect `work/build-ios.log` for provisioning errors. The current shell requests increased-memory and extended-virtual-addressing entitlements; entitlement/account availability and actual device memory limits still need validation. The signing command is not an install command. Do not publish the resulting App/IPA: it contains your rewritten game program and shaders.
-
-For subsequent device experiments, the shell expects your complete RomFS in its container's `Library/Application Support/romfs` and prepared movie cache in `Documents/media`. `core_000.pkz` is the resource marker; copying only that file is insufficient. Logs go to `Documents/boot.txt`. Container transfer, signing and all device behavior remain developer work to verify, not a supported end-user installation promise.
+Release is the default. The same iOS app now offers Normal/Wide, Metal HUD and MetalFX startup settings; both signed images are embedded at build time. Mobile scaling targets the native screen rather than the Mac's fixed 4K output. Signing, installation and real iPhone Air combat have been observed; see [STATUS.md](STATUS.md) for actual gameplay progress. Unsigned apps cannot be installed. Builds do not prove device gameplay. Generated Apps/IPAs contain game-derived programs and shaders; keep them private.
 
 ## 7. Source-only tests and publication
 

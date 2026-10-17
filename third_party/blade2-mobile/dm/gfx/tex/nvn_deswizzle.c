@@ -50,13 +50,14 @@ static int move(const nvn_texdesc *d, unsigned level, unsigned layer, uint8_t *b
     uint32_t row_bytes, rows, slices, bpb; uint64_t base; unsigned th, td;
     if (nvn_deswizzle_geom(d, level, layer, &row_bytes, &rows, &slices, &base, &th, &td, &bpb)) return -1;
     if (pitch < row_bytes) return -1;
+    uint32_t storage_row_bytes=nvn_tex_level_row_bytes(d,level);
     bl += base;
     for (uint32_t z = 0; z < slices; z++)
         for (uint32_t y = 0; y < rows; y++) {
             uint8_t *row = lin + ((size_t)z * rows + y) * pitch;
             for (uint32_t x = 0; x < row_bytes; x += 16) {             // 16 字节一段：GOB 内 16 字节连续，且整除所有块宽 | 16-byte segments: 16 bytes are contiguous within a GOB, and 16 divides all block widths
                 uint32_t n = row_bytes - x < 16 ? row_bytes - x : 16;
-                uint8_t *p = bl + nvn_bl_offset(x, y, z, row_bytes, rows, th, td);
+                uint8_t *p = bl + nvn_bl_offset(x, y, z, storage_row_bytes, rows, th, td);
                 if (to_linear) memcpy(row + x, p, n); else memcpy(p, row + x, n);
             }
         }

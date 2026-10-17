@@ -331,7 +331,18 @@ static const struct mach_header_64 *image_mh(void) {
 #endif
 static void map_image(module_t *m, const char *dir) {
     (void)dir;
-    char sx0[17], sx1[17], dm[17]; snprintf(sx0, sizeof sx0, "__dm%sx0", m->name); snprintf(sx1, sizeof sx1, "__dm%sx1", m->name); snprintf(dm, sizeof dm, "__DM%sW", m->name);
+    const char *section_name=m->name;
+#if TARGET_OS_IPHONE && DM_BAYONETTA3
+    // Both alternatives are immutable signed sections of this executable.
+    // Select before preload; the module's original identity/fixups never change.
+    const char *mode=getenv("DM_IOS_GRAPHICS_MODE");
+    if(!strcmp(m->name,"main")) {
+        if(mode && !strcmp(mode,"wide"))section_name="mainwide";
+        else if(mode && strcmp(mode,"normal"))die("Unknown iOS graphics mode: %s",mode);
+        LOG("iOS signed image selection: %s (%s)",mode?:"normal",section_name);
+    }
+#endif
+    char sx0[17], sx1[17], dm[17]; snprintf(sx0, sizeof sx0, "__dm%sx0", section_name); snprintf(sx1, sizeof sx1, "__dm%sx1", section_name); snprintf(dm, sizeof dm, "__DM%sW", section_name);
     unsigned long z0, zw, z1;
     const uint8_t *x0 = getsectiondata(IMAGE_MH, "__TEXT", sx0, &z0), *w = getsectiondata(IMAGE_MH, dm, "__img", &zw), *x1 = getsectiondata(IMAGE_MH, "__TEXT", sx1, &z1);
     if (!x0 || !w || !x1) die("内嵌节 %s / %s / %s 缺失", sx0, dm, sx1);

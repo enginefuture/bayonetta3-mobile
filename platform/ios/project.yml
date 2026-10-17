@@ -18,12 +18,15 @@ targets:
     platform: iOS
     sources:
       - Sources
-      - Assets.xcassets               # 占位图标（不是游戏素材） | Placeholder icon (not a game asset)
+      - Gen/Assets.xcassets            # Generated from the project's own SVG logo
       - path: Gen/embed.S             # main / sdk 改写映像（gen_embed.py；main 的补丁区在映像前面） | main / sdk rewritten images (gen_embed.py; main's patch area lies before the image)
       - path: Gen/dm                  # 装载表头 / 门表 / 剪口表 / 着色器映射表（App 内 dm/ = 宿主的「产物目录」） | Load table headers / gate tables / cut table / shader map (dm/ inside the App = the host's "build output dir")
         type: folder
         buildPhase: resources
       - path: Gen/msl                 # iOS 版 metallib + 反射 json（DM_MSL_DIR；只带当前翻译链版本 b-<V>） | iOS metallib + reflection json (DM_MSL_DIR; only the current chain version b-<V>)
+        type: folder
+        buildPhase: resources
+      - path: Gen/tessellation
         type: folder
         buildPhase: resources
       - path: Gen/src                 # Makefile.bayonetta3 编译命令里的源文件（gen_build.py 链入） | Source files from the Makefile.bayonetta3 compile command (linked in by gen_build.py)
@@ -35,10 +38,10 @@ targets:
         CFBundleDisplayName: Bayonetta 3
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleShortVersionString: $(MARKETING_VERSION)
-        UILaunchStoryboardName: ""
+        UILaunchScreen: {}           # Native iPhone dimensions, avoiding legacy compatibility sizing
         UIFileSharingEnabled: true                 # 玩家把 RomFS（Bayonetta3/ 文件夹）用「文件」App 拷进 Documents | Players copy the RomFS (Bayonetta3/ folder) into Documents with the Files app
         LSSupportsOpeningDocumentsInPlace: true
-        UISupportedInterfaceOrientations:          # 游戏只渲 1280x720 横屏 | The game only renders 1280x720 landscape
+        UISupportedInterfaceOrientations:          # 横屏；可选守卫版真宽屏配置 | Landscape; optional guarded expanded-FOV profile
           - UIInterfaceOrientationLandscapeRight
           - UIInterfaceOrientationLandscapeLeft
         UIRequiresFullScreen: true
@@ -73,6 +76,7 @@ targets:
       CURRENT_PROJECT_VERSION: "1"
       TARGETED_DEVICE_FAMILY: "1,2"
       ENABLE_BITCODE: NO
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       ENABLE_DEBUG_DYLIB: NO   # Debug 缺省把 App 拆成壳 + 调试 dylib（Xcode 预览用），内嵌映像段与 _mh_execute_header 就不在主可执行文件里了 | Debug by default splits the App into a stub + debug dylib (for Xcode previews), which moves the embedded image sections and _mh_execute_header out of the main executable
       ENABLE_USER_SCRIPT_SANDBOXING: NO
       GCC_C_LANGUAGE_STANDARD: gnu11

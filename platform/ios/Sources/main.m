@@ -9,12 +9,16 @@
 // Assets: the player copies the contents of Update/RomFS (containing core_000.pkz) into this App's Documents with the Files app (any folder name, up to 4 extra levels);
 // during development it can also be pushed into the container's Library/Application Support/romfs (devicectl command above).
 #import <UIKit/UIKit.h>
+#import <Metal/Metal.h>
+#import <MetalFX/MetalFX.h>
+#include <os/proc.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include "front.h"
+#import "LauncherViewController.h"
 
 int dm_main(int argc, char **argv);                 // dm/host/main.c 以 -Dmain=dm_main 编入 | dm/host/main.c is compiled in with -Dmain=dm_main
 void dm_host_shutdown(const char *why);             // dm/host/hle_lifecycle.c
@@ -24,6 +28,28 @@ void front_blade_focus(int ev);                     // front_blade.m：场景生
 static int g_argc; static char *g_argv[8];
 static NSString *g_romfs, *g_why;                   // 找到的资源目录 / 没找到的原因 | located asset dir / reason when not found
 static _Atomic int g_host_started;
+static BOOL g_launch_selected;
+
+static NSDictionary *mobile_graphics(void) {
+    NSData *data=[NSData dataWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"dm/mobile-graphics.json"]];
+    return data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
+}
+
+static void device_report(NSString *doc) {
+    id<MTLDevice> gpu=MTLCreateSystemDefaultDevice();
+    BOOL spatial=gpu && [MTLFXSpatialScalerDescriptor supportsDevice:gpu];
+    NSDictionary *report=@{@"os":UIDevice.currentDevice.systemVersion,
+        @"gpu":gpu.name?:@"unavailable", @"physical_memory":@(NSProcessInfo.processInfo.physicalMemory),
+        @"available_memory":@(os_proc_available_memory()), @"recommended_gpu_working_set":@(gpu.recommendedMaxWorkingSetSize),
+        @"bc_textures":@(gpu.supportsBCTextureCompression), @"metalfx_spatial":@(spatial),
+        @"render_policy":[NSString stringWithUTF8String:getenv("DM_IOS_GRAPHICS_MODE")?:"normal"], @"output_policy":@"native-drawable-aspect-fit",
+        @"metalfx_requested":@(!strcmp(getenv("DM_METALFX")?:"off","spatial")),
+        @"metal_hud_requested":@(!strcmp(getenv("MTL_HUD_ENABLED")?:"0","1")),
+        @"frame_generation":@NO};
+    NSData *data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
+    [data writeToFile:[doc stringByAppendingPathComponent:@"device-report.json"] atomically:YES];
+    fprintf(stderr,"boot: iOS device report %s\n",[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding].UTF8String);
+}
 
 static void plog(const char *fmt, ...) { va_list ap; va_start(ap, fmt); fprintf(stderr, "boot: "); vfprintf(stderr, fmt, ap); fputc('\n', stderr); va_end(ap); }
 
@@ -59,13 +85,52 @@ static NSString *romfs_locate(NSString *doc) {
     return nil;
 }
 
-// boot 前提（main() 开头、UIApplicationMain 前）：目录 / 环境变量 / cwd——宿主提前装载（dm_host_preload_start）要读这些
-// boot prerequisites (start of main(), before UIApplicationMain): directories / environment variables / cwd -- the host's early load (dm_host_preload_start) reads these
+// File names and lengths are generated into the private app, never published.
+// Do not enter the guest while a Files/USB transfer is incomplete.
+static BOOL assets_ready(NSString *doc, NSString *res) {
+    NSData *data=[NSData dataWithContentsOfFile:[res stringByAppendingPathComponent:@"dm/private-assets.json"]];
+    NSDictionary *inventory=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
+    if(![inventory[@"romfs"] count] || ![inventory[@"media"] count]) {
+        g_why=@"资源清单缺失，请重新构建。\nPrivate resource inventory is missing; rebuild the app.";return NO;
+    }
+    for(NSString *kind in @[@"romfs",@"media"]) {
+        NSString *root=[kind isEqual:@"romfs"]?g_romfs:[doc stringByAppendingPathComponent:@"media"];
+        NSDictionary *files=inventory[kind];
+        for(NSString *name in files) {
+            NSDictionary *attributes=[NSFileManager.defaultManager attributesOfItemAtPath:[root stringByAppendingPathComponent:name] error:nil];
+            if(![attributes[NSFileType] isEqual:NSFileTypeRegular] || [attributes[NSFileSize] unsignedLongLongValue]!=[files[name] unsignedLongLongValue]) {
+                g_why=[NSString stringWithFormat:@"资源传输未完成：%@/%@\n请完成复制后重新打开。\nResource transfer incomplete: %@/%@. Reopen after copying finishes.",kind,name,kind,name];
+                return NO;
+            }
+        }
+    }
+    plog("Resource inventory complete: %lu RomFS files / %lu AVC movies (file lengths checked; not a new content-hash proof)",(unsigned long)[inventory[@"romfs"] count],(unsigned long)[inventory[@"media"] count]);
+    return YES;
+}
+
+// Prepare directories/resources only. Guest preload and Metal device creation
+// wait until the user commits launch settings.
 static void boot_prepare(NSString *doc) {
     NSFileManager *fm = NSFileManager.defaultManager; NSString *res = NSBundle.mainBundle.resourcePath;
+    // Create transfer destinations even before assets arrive. devicectl's
+    // individual-file service requires existing parent directories.
+    for (NSString *d in @[@"save", @"temp", @"media"])
+        [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *support=NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,NSUserDomainMask,YES)[0];
+    NSString *transferRoot=[support stringByAppendingPathComponent:@"romfs"];
+    [fm createDirectoryAtPath:transferRoot withIntermediateDirectories:YES attributes:nil error:nil];
+    NSData *inventoryData=[NSData dataWithContentsOfFile:[res stringByAppendingPathComponent:@"dm/private-assets.json"]];
+    NSDictionary *inventory=inventoryData?[NSJSONSerialization JSONObjectWithData:inventoryData options:0 error:nil]:nil;
+    NSMutableSet *directories=[NSMutableSet set];
+    for(NSString *name in inventory[@"romfs"]) {
+        NSString *parent=name.stringByDeletingLastPathComponent;
+        if(parent.length) [directories addObject:parent];
+    }
+    for(NSString *parent in directories)
+        [fm createDirectoryAtPath:[transferRoot stringByAppendingPathComponent:parent] withIntermediateDirectories:YES attributes:nil error:nil];
     g_romfs = romfs_locate(doc);
     if (!g_romfs) { plog("%s", g_why.UTF8String); return; }
-    for (NSString *d in @[@"save", @"temp"]) [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
+    if (!assets_ready(doc,res)) {g_romfs=nil;plog("%s",g_why.UTF8String);return;}
     setenv("DM_ROMFS", g_romfs.fileSystemRepresentation, 0);
     setenv("DM_SAVE", [doc stringByAppendingPathComponent:@"save"].fileSystemRepresentation, 0);
     setenv("DM_TEMP", [doc stringByAppendingPathComponent:@"temp"].fileSystemRepresentation, 0);
@@ -73,6 +138,15 @@ static void boot_prepare(NSString *doc) {
     setenv("DM_MOVIE", "1", 0);setenv("DM_AUDIO", "1", 0);
     setenv("DM_MSL_DIR", [res stringByAppendingPathComponent:@"msl"].fileSystemRepresentation, 0);              // 宿主只从 DM_MSL_DIR/b-<V>/ 加载 | the host loads only from DM_MSL_DIR/b-<V>/
     setenv("DM_NVN_SHMAP", [res stringByAppendingPathComponent:@"dm/shader_map.tsv"].fileSystemRepresentation, 0);
+    setenv("DM_NVN_TESS_DIR", [res stringByAppendingPathComponent:@"tessellation"].fileSystemRepresentation, 0);
+    // Handheld SDK mode; the optional guarded profile synchronizes its targets.
+    setenv("DM_OPMODE", "0", 0);
+    setenv("DM_NVN_INDIRECT_BATCH", "1", 0);
+    setenv("DM_METALFX", "spatial", 0);
+    setenv("DM_FRAME_GENERATION", "off", 1);
+    setenv("DM_NVN_TSV", [doc stringByAppendingPathComponent:@"frames.tsv"].fileSystemRepresentation, 0);
+    setenv("DM_NVN_TSV_CALLS", "0", 0);
+    setenv("DM_NVN_TSV_MAX_MB", "16", 0);
     // 与 Mac 上验证过的跑法一致（README 四 / 五）：预热清单关、TBDR 优化关（D2R 调的，Blade 未验证）、SysRes 0（Blade 的 npdm；通用宿主缺省已是 0）
     // Same as the run verified on Mac (README 四 / 五): warm-up manifest off, TBDR optimisations off (tuned for D2R, unverified on Blade), SysRes 0 (Blade's npdm; already the generic host default)
     setenv("DM_PSO_MANIFEST", "off", 0); setenv("DM_NVN_TBDR", "0", 0); setenv("DM_SYSRES_MB", "0", 0);
@@ -81,7 +155,6 @@ static void boot_prepare(NSString *doc) {
     static char a0[] = "Bayonetta3", a2[] = "main", a3[] = "subsdk0", a4[] = "sdk";
     g_argv[0] = a0; g_argv[1] = strdup([res stringByAppendingPathComponent:@"dm"].fileSystemRepresentation); g_argv[2] = a2; g_argv[3] = a3; g_argv[4] = a4; g_argc = 5;   // App 内 dm/ = 产物目录（表头 / 门表；映像在可执行文件的段里） | dm/ inside the App = build output dir (table headers / gate tables; the images are in the executable's segments)
     plog("RomFS %s；产物目录 %s；着色器库 %s", g_romfs.UTF8String, g_argv[1], getenv("DM_MSL_DIR"));
-    if (!getenv("DM_NO_PRELOAD")) dm_host_preload_start(g_argc, g_argv);   // 装载 / 重定位与 UIKit 启动并行；dm_main 进来时等它 | loading / relocation in parallel with the UIKit launch; dm_main waits for it
 }
 
 static void *boot_thread(void *arg) { (void)arg; pthread_setname_np("dm-boot"); plog("dm_main"); int rc = dm_main(g_argc, g_argv); plog("dm_main 返回 %d", rc); return NULL; }
@@ -106,18 +179,44 @@ static void host_start(void) {
 @property (strong, nonatomic) UIWindow *window;
 @end
 @implementation SceneDelegate
+- (void)startWide:(BOOL)wide hud:(BOOL)hud metalfx:(BOOL)metalfx {
+    if(g_launch_selected||!g_romfs)return;
+    NSDictionary *graphics=mobile_graphics();
+    if(wide && (![graphics[@"startup_selection"] boolValue] || ![graphics[@"mode"] isEqual:@"mobile-expanded-fov"] ||
+                [graphics[@"parameters"][@"width"] intValue]!=1568 || [graphics[@"parameters"][@"height"] intValue]!=720)) {
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Bayonetta 3" message:@"宽屏配置无效，请重新构建。\nInvalid wide profile; rebuild the app." preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self.window.rootViewController presentViewController:alert animated:YES completion:nil];return;
+    }
+    // These settings take precedence over debugger launch variables. Set HUD
+    // before even querying MTLCreateSystemDefaultDevice, and choose the signed
+    // image before starting the loader's background thread.
+    setenv("DM_IOS_GRAPHICS_MODE",wide?"wide":"normal",1);
+    if(wide)setenv("DM_GAME_RES","1568x720",1);else unsetenv("DM_GAME_RES");
+    setenv("MTL_HUD_ENABLED",hud?"1":"0",1);
+    setenv("DM_METALFX",metalfx?"spatial":"off",1);
+    plog("Launch settings: mode=%s Metal-HUD=%s MetalFX=%s signed-main=%s",wide?"wide":"normal",hud?"on":"off",metalfx?"spatial":"off",
+         [graphics[wide?@"configured_sha256":@"normal_image_sha256"] UTF8String]?:"original");
+    NSString *doc=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES)[0];
+    device_report(doc);
+    if(!getenv("DM_NO_PRELOAD"))dm_host_preload_start(g_argc,g_argv);
+    GameVC *vc=[GameVC new];UIWindowScene *ws=self.window.windowScene;
+    vc.view=front_blade_view(ws.effectiveGeometry.coordinateSpace.bounds,ws.screen.nativeScale);
+    vc.view.accessibilityIdentifier=@"game-canvas";
+    self.window.rootViewController=vc;g_launch_selected=YES;
+    dispatch_async(dispatch_get_main_queue(),^{if(UIApplication.sharedApplication.applicationState==UIApplicationStateActive)host_start();});
+}
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)s options:(UISceneConnectionOptions *)o {
     UIWindowScene *ws = (UIWindowScene *)scene;
     self.window = [[UIWindow alloc] initWithWindowScene:ws];
-    GameVC *vc = [GameVC new]; vc.view.backgroundColor = UIColor.blackColor;
-    if (g_romfs) vc.view = front_blade_view(ws.effectiveGeometry.coordinateSpace.bounds, ws.screen.nativeScale);
-    else {   // 没资源：只显示说明 | No assets: show the instructions only
-        UILabel *l = [[UILabel alloc] initWithFrame:CGRectInset(vc.view.bounds, 40, 40)]; l.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        l.text = g_why; l.numberOfLines = 0; l.textAlignment = NSTextAlignmentCenter; l.textColor = UIColor.whiteColor; l.font = [UIFont systemFontOfSize:16]; [vc.view addSubview:l];
-    }
+    LauncherViewController *vc=[[LauncherViewController alloc] initWithWideAvailable:[mobile_graphics()[@"startup_selection"] boolValue] ready:g_romfs!=nil reason:g_why];
+    __weak SceneDelegate *weakSelf=self;
+    vc.onPlay=^(BOOL wide,BOOL hud,BOOL metalfx){[weakSelf startWide:wide hud:hud metalfx:metalfx];};
     self.window.rootViewController = vc; [self.window makeKeyAndVisible];
+    // Keep the foreground transfer/instructions screen awake too.
+    UIApplication.sharedApplication.idleTimerDisabled = YES;
 }
-- (void)sceneDidBecomeActive:(UIScene *)s { if (atomic_load(&g_host_started)) front_blade_focus(3); else host_start(); }   // 第一次到前台才起宿主：Metal 层已建好、窗口已有尺寸 | Start the host only on first foreground: the Metal layer exists and the window has its size
+- (void)sceneDidBecomeActive:(UIScene *)s { if (atomic_load(&g_host_started)) front_blade_focus(3); else if(g_launch_selected)host_start(); }
 - (void)sceneWillResignActive:(UIScene *)s { if (atomic_load(&g_host_started)) front_blade_focus(0); }
 - (void)sceneDidEnterBackground:(UIScene *)s { if (atomic_load(&g_host_started)) front_blade_focus(1); }
 - (void)sceneWillEnterForeground:(UIScene *)s { if (atomic_load(&g_host_started)) front_blade_focus(2); }

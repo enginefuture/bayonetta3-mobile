@@ -65,6 +65,21 @@ static void samples_xy(int s, uint32_t *sx, uint32_t *sy) {
     if (s == 2) *sx = 2; else if (s == 4) *sx = *sy = 2; else if (s == 8) { *sx = 4; *sy = 2; }
 }
 
+// Sparse/packaged rows can have extra GOB columns. Like deko3d's
+// calcLevelOffset, apply the sparse width only while the mip contains a full
+// root-height tile; smaller mips use the ordinary dense row layout.
+static uint32_t level_gobs_x(const nvn_texdesc *d,uint32_t width_blocks,uint32_t height_blocks,uint32_t depth,unsigned tileH,unsigned tileD,fmt_t t){
+    uint32_t gobs=(width_blocks*t.bpb+63)/64;
+#if DM_BAYONETTA3
+    if(d->pkg_tile_w && width_blocks>=(64u/t.bpb<<d->pkg_tile_w) && height_blocks>=(8u<<tileH) && depth>=(1u<<tileD)){
+        uint32_t align=1u<<d->pkg_tile_w;gobs=(gobs+align-1)&~(align-1);
+    }
+#else
+    (void)d;(void)height_blocks;(void)depth;(void)tileH;(void)tileD;
+#endif
+    return gobs;
+}
+
 static uint64_t level_offset(const nvn_texdesc *d, unsigned level, unsigned dpl, uint32_t w, uint32_t h, uint32_t z,
                              unsigned tileH, unsigned tileD, fmt_t t) {
     uint32_t sx, sy; samples_xy(d->samples, &sx, &sy);
@@ -73,9 +88,8 @@ static uint64_t level_offset(const nvn_texdesc *d, unsigned level, unsigned dpl,
         uint32_t lw = blk(mip(w * sx, i), t.bw);
         uint32_t lh = dpl >= 2 ? blk(mip(h * sy, i), t.bh) : 1;
         uint32_t ld = dpl >= 3 ? mip(z, i) : 1;
-        uint32_t lwb = lw * t.bpb;
         unsigned th = adj_tile(tileH, 8, lh), td = adj_tile(tileD, 1, ld);
-        uint32_t wg = (lwb + 63) / 64, hg = (lh + 7) / 8;
+        uint32_t wg = level_gobs_x(d,lw,lh,ld,tileH,tileD,t), hg = (lh + 7) / 8;
         uint32_t wt = wg, ht = (hg + (1u << th) - 1) >> th, dt = (ld + (1u << td) - 1) >> td;
         off += (uint64_t)wt * ht * dt << (9 + th + td);
     }
@@ -114,7 +128,13 @@ void nvn_tex_layout(const nvn_texdesc *d, nvn_texlayout *o) {
         uint32_t hh = blk(h, t.bh); unsigned th = tileH, td = tileD;
         while (th && hh <= (8u << (th - 1))) th--;
         while (td && z <= (1u << (td - 1))) td--;
-        unsigned sh = th + td + 9; uint64_t g = ls >> sh;
+        // Packaged sparse faces start on complete tiles, including tileW.
+        // Ordinary dense arrays retain their original layer alignment.
+        unsigned sh = th + td + 9;
+#if DM_BAYONETTA3
+        sh += d->pkg_tile_w;
+#endif
+        uint64_t g = ls >> sh;
         if (ls != g << sh) ls = (g + 1) << sh;
     }
     o->layer_size = ls;
@@ -129,6 +149,13 @@ uint64_t nvn_tex_level_offset(const nvn_texdesc *d, unsigned level) {
     if (!t.bpb || (d->flags & 0x10) || d->target == 10) return 0;
     nvn_texlayout L; nvn_tex_layout(d, &L);
     return level_offset(d, level, dpl, w, h, z, L.tileH, L.tileD, t);
+}
+
+uint32_t nvn_tex_level_row_bytes(const nvn_texdesc *d,unsigned level){
+    fmt_t t=fmt_of(d->format);if(!t.bpb)return 0;
+    unsigned dims;int layered;uint32_t w,h,z;shape(d,&dims,&layered,&w,&h,&z);
+    uint32_t sx,sy;samples_xy(d->samples,&sx,&sy);nvn_texlayout layout;nvn_tex_layout(d,&layout);
+    return 64*level_gobs_x(d,blk(mip(w*sx,level),t.bw),dims>=2?blk(mip(h*sy,level),t.bh):1,dims>=3?mip(z,level):1,layout.tileH,layout.tileD,t);
 }
 
 void nvn_tex_level_tiles(const nvn_texdesc *d, unsigned level, unsigned *tileH, unsigned *tileD) {

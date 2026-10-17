@@ -66,6 +66,6 @@ def main():
     run([sys.executable,T/'c1_guard.py',w/'build/cache/metal_shader_cache'/('b-'+version),shader/'c1_full.tsv'])
     interfaces=build_receipt(w/'build/cache/metal_shader_cache'/('b-'+version),version)
     print(f"Complete varying ABI checked: {interfaces['vertices']} vertex / {interfaces['fragments']} fragment libraries, {len(interfaces['required'])} locations")
-    print(f"Supported shader generation finished; {len(capture['unsupported'])} captured tessellation stages remain unsupported. Rebuild host before running this chain.")
+    print(f"Ordinary shader generation finished; {len(capture['unsupported'])} tessellation stages use the separate build_tessellation.py supplement. Rebuild host before running this chain.")
 
 if __name__=='__main__':main()

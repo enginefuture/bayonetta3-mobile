@@ -11,6 +11,8 @@ import time
 from media_cache import movie_inventory
 from shader_interfaces import verify_receipt
 from run_diagnostics import execute, write_json
+from graphics_profile import launch_directory
+from tessellation_shaders import verify_receipt as verify_tessellation
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,9 +39,15 @@ def main():
     p.add_argument('--input-script',type=Path,help='Post timed native NSEvent input from a local script (seconds key mac-keycode)')
     p.add_argument('--pad-sequence',help='Diagnostic timed Npad buttons, e.g. A@7+0.3,A@10+0.3; ORed with physical input')
     p.add_argument('--present-link',type=int,choices=(0,1,2),default=0,help='0: direct drawable pacing; 1/2: display-link pacing')
+    p.add_argument('--diagnostic-luminance',action='store_true',help='Compare same-frame guest/output luminance privately to diagnose flashing')
+    p.add_argument('--render-resolution',choices=('native','1080p'),default='1080p',help='Exact-build scene and swapchain configuration; native retains original dimensions')
+    p.add_argument('--frame-generation',choices=('off','metal'),default='off',help='Experimental MetalFX interpolation using real scene depth/camera and GPU image motion; requires 100+ Hz display')
+    p.add_argument('--metalfx',choices=('off','spatial'),default='spatial',help='MetalFX spatial 1920x1080 to 3840x2160; requires 1080p rendering')
     p.add_argument('--inspect-frame',type=int,help='Dump one actual guest frame: render targets, draw/resource bindings and uniform bytes')
     p.add_argument('--probe-depth-keys',help='Diagnostic only: disable depth comparison for listed fragment keys; resulting frames cannot pass validation')
     a = p.parse_args()
+    if a.frame_generation!='off' and (a.metalfx!='spatial' or a.present_link!=0):p.error('MetalFX frame generation requires spatial upscaling and direct presentation')
+    if a.metalfx != 'off' and a.render_resolution != '1080p':p.error('MetalFX 4K requires --render-resolution 1080p')
     if not 0 <= a.seconds <= 600:
         p.error('--seconds must be 0..600 (0 leaves the game open)')
     w = a.work.resolve()
@@ -59,6 +67,10 @@ def main():
         (w/part).mkdir(parents=True,exist_ok=True)
     stamp=time.strftime('%Y%m%d-%H%M%S')+'-'+str(os.getpid())
     log=w/'run/log'/('native-'+stamp+'.log')
+    rewrite=w/'rewrite'
+    if a.render_resolution=='1080p':
+        rewrite=launch_directory(w,w/'run'/('graphics-'+stamp))
+        print(f'Guarded 1080p graphics configuration: {rewrite}/graphics.json',flush=True)
     if not a.skip_media_preflight:
         print('Checking original movie/cache hashes before chapter play...',flush=True)
         movies=movie_inventory(romfs/'movie',w/'media')
@@ -71,23 +83,36 @@ def main():
                      f'  .venv/bin/python tools/prepare_media.py "{romfs}/movie" --cache "{w}/media"\n')
         print(f'{len(movies)} original movie caches verified.',flush=True)
     else:print('Diagnostic: movie preflight skipped; no full chapter pass.',flush=True)
+    header=(ROOT/'third_party/blade2-mobile/dm/gfx/nvn/dmsh_chain.h').read_text()
+    chain=re.search(r'#define DMSH_CHAIN \"([0-9a-f]{12})\"',header).group(1)
     if not a.capture_shaders:
-        header=(ROOT/'third_party/blade2-mobile/dm/gfx/nvn/dmsh_chain.h').read_text()
-        chain=re.search(r'#define DMSH_CHAIN "([0-9a-f]{12})"',header).group(1)
         try:
             interfaces=verify_receipt(w/'build/cache/metal_shader_cache'/('b-'+chain),chain)
         except (OSError,ValueError,KeyError) as error:
             p.exit(2,f'Shader interface preflight failed: {error}\nRebuild the complete cache with tools/build_shaders.py and rebuild the host.\n')
         print(f"Shader varying ABI verified: {interfaces['vertices']} vertex / {interfaces['fragments']} fragment libraries.",flush=True)
+    tess=w/'build/cache/tessellation'/chain
+    tess_metadata=None
+    if tess.exists():
+        try:
+            tess_receipt=verify_tessellation(tess,chain)
+        except (OSError,ValueError,KeyError) as error:p.exit(2,f'Tessellation supplement preflight failed: {error}\n')
+        print(f"Tessellation supplement verified: {len(tess_receipt['pairs'])} original stage combinations",flush=True)
+        tess_metadata={'directory':str(tess),'receipt_sha256':hashlib.sha256((tess/'_tessellation.json').read_bytes()).hexdigest(),
+                       'pairs':tess_receipt['pairs'],'unsupported':sorted(tess_receipt.get('unsupported',{}))}
     shmap = w/'shaders/shader_map.tsv'
     if not shmap.exists():
         shmap.write_text('# Bayonetta 3 shader capture pending\n')
     env = {k:v for k,v in os.environ.items() if not k.startswith('DM_')}
-    env.update(DM_ROOT=str(w),DM_ROMFS=str(romfs),DM_SAVE=str(w/'run/save'),DM_TEMP=str(w/'run/temp'),
+    env.update(DM_OUTPUT_RES='3840x2160',DM_SOURCE_ROOT=str(ROOT),DM_ROOT=str(w),DM_ROMFS=str(romfs),DM_SAVE=str(w/'run/save'),DM_TEMP=str(w/'run/temp'),
                DM_NVN_SHMAP=str(shmap),DM_NVN_USED_SHADERS=str(w/'shaders/used.txt'),DM_NVN_SHDUMP=str(w/'shdump'),DM_NVN_PAIRS=str(w/'shaders/pairs.tsv'),
                DM_NVN_TEXFACTS=str(w/'shaders/texfacts.tsv'),DM_PSO_MANIFEST='off',DM_NVN_TBDR='0',DM_SYSRES_MB='0',
                DM_AUDIO='1',DM_MOVIE='1',DM_MOVIE_CACHE=str(w/'media'),DM_WINDOW='1',DM_WATCH=str(a.seconds),DM_DBG='1',DM_LOADHASH='1',DM_PRESENT_LINK=str(a.present_link))
     if not a.seconds:env.pop('DM_WATCH',None)
+    if tess.exists():env['DM_NVN_TESS_DIR']=str(tess)
+    if a.metalfx!='off':env['DM_METALFX']=a.metalfx
+    if a.frame_generation!='off':env['DM_FRAME_GENERATION']=a.frame_generation
+    if a.diagnostic_luminance:env['DM_PRESENT_LUMA']=str(log.with_suffix('.luma.tsv'))
     if a.metal_hud or a.metal_hud_log:env['MTL_HUD_ENABLED']='1'
     if a.metal_hud_log:env['MTL_HUD_LOG_ENABLED']='1'
     if a.profile:
@@ -125,13 +150,14 @@ def main():
     print(f'Native experiment; log: {log}',flush=True)
     if a.metal_hud or a.metal_hud_log:print('Metal Performance HUD enabled for this process',flush=True)
     if not a.seconds:print('Interactive run: no watchdog; close the game window or press Command-Q to exit',flush=True)
-    cmd=[str(binary),str(w/'rewrite'),*profile['runtime_modules']]
+    cmd=[str(binary),str(rewrite),*profile['runtime_modules']]
     if a.debug_script:cmd=['xcrun','lldb','--batch','-s',str(a.debug_script.resolve()),'--',*cmd]
     rc=execute(cmd,env,log,{'profile':str(ROOT/'config/bayonetta3-1.2.0.json'),
         'host_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),
         'shader_chain_header':(ROOT/'third_party/blade2-mobile/dm/gfx/nvn/dmsh_chain.h').read_text().strip(),
-        'diagnostics':{'profile':a.profile,'gpu_profile':a.gpu_profile,'movie_preflight':not a.skip_media_preflight,
-                       'capture_shaders':a.capture_shaders,'shader_interface_preflight':not a.capture_shaders,'present_link':a.present_link,
+        'diagnostics':{'render_resolution':a.render_resolution,'metalfx':a.metalfx,'frame_generation':a.frame_generation,'diagnostic_luminance':a.diagnostic_luminance,'graphics_configuration':str(rewrite/'graphics.json') if a.render_resolution=='1080p' else None,
+                       'profile':a.profile,'gpu_profile':a.gpu_profile,'movie_preflight':not a.skip_media_preflight,
+                       'capture_shaders':a.capture_shaders,'shader_interface_preflight':not a.capture_shaders,'tessellation':tess_metadata,'present_link':a.present_link,
                        'indirect_batch':a.indirect_batch,'indirect_batch_control':str(a.indirect_batch_control.resolve()) if a.indirect_batch_control else None,
                        'pad_sequence':a.pad_sequence}},
         timeout=a.seconds+15 if a.seconds else None,watchdog=bool(a.seconds))

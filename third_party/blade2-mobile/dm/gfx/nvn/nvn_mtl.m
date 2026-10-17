@@ -1,6 +1,7 @@
 // NVN 空设备的 Metal 执行层，见 nvn_mtl.h。
 // Metal execution layer of the NVN null device, see nvn_mtl.h.
 #import <Metal/Metal.h>
+#import <MetalFX/MetalFX.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CAMetalDisplayLink.h>
 #import <ImageIO/ImageIO.h>
@@ -936,6 +937,18 @@ double mtl_gpu_ms(uint64_t f) {
     unsigned k = f % GRING;
     if (atomic_load(&g_gpu[k].frame) != f || atomic_load(&g_gpu[k].pending)) return -1;
     return atomic_load(&g_gpu[k].ns) / 1e6;
+}
+#if DM_BAYONETTA3
+static _Atomic uint64_t g_fx_generated_presented,g_fx_real_presented;
+static int metalfx_enabled(void);
+void mtl_present_stats(uint64_t *shown,uint64_t *generated,int *fx){
+    *generated=atomic_load(&g_fx_generated_presented);*shown=atomic_load(&g_fx_real_presented)+*generated;*fx=metalfx_enabled();
+}
+#endif
+void mtl_front_stats(uint64_t *frame,double *gpu_ms) {
+    uint64_t f=atomic_load(&g_cur_frame);*frame=f;double sum=0;unsigned n=0;
+    for(uint64_t k=f>30?f-30:0;k+3<f;k++){double ms=mtl_gpu_ms(k);if(ms>=0){sum+=ms;n++;}}
+    *gpu_ms=n?sum/n:-1;
 }
 int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1) {
     unsigned k = f % GRING;
@@ -2445,7 +2458,11 @@ static void shmap_load(void) {
     id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
 #include "nvn_pso_skey.h"
-@interface NvProg : NSObject { @public NvShader *sh[6]; char gskey[24]; } @end
+@interface NvProg : NSObject { @public NvShader *sh[6]; char gskey[24];
+#if DM_BAYONETTA3
+    char tesskeys[2][17]; // Bound TCS/TES metadata; never replace an active patch draw.
+#endif
+ } @end
 static void attrfacts_note(NvShader *vs, int loc, int fmt);   // 定义在 encode_args 之前 | defined before encode_args   // gskey：绑了几何着色器时的键（不加载，见 prog_get） | gskey: key of the bound geometry shader (not loaded, see prog_get)
 @implementation NvProg @end
 // 预热项：后台建好、等提交线程领用。vs / fs 强引用（pso 里只是裸指针，后台字典随任务结束释放）
@@ -2727,7 +2744,7 @@ static void title_prog_note(const prog_t *p){
     for(unsigned i=0;i<p->nstage;i++){
         uint8_t hash[32];uint32_t size=nvn_control_size(p->sd[i].control);if(!size)MDIE("invalid program control layout");
         CC_SHA256(p->sd[i].control,size,hash);char key[17];for(int j=0;j<8;j++)snprintf(key+2*j,3,"%02x",hash[j]);
-        NSString *word=g_shmap[@(key)];int stage=word?stage_of(word):-1;if(stage>=0 && stage<6)memcpy(keys[stage],key,17);
+        int stage=nvn55_shader_stage(&p->sd[i]);if(stage>=0 && stage<6)memcpy(keys[stage],key,17);
     }
     char line[256]="";for(int stage=0;stage<6;stage++)if(keys[stage][0]){size_t n=strlen(line);snprintf(line+n,sizeof line-n,"%s%d:%s",n?" ":"",stage,keys[stage]);}
     if(line[0]){fprintf(file,"%s\n",line);fflush(file);}
@@ -2751,6 +2768,18 @@ static __unsafe_unretained NvProg *prog_get(const prog_t *cp) {   // 只在提�
 #if DM_BAYONETTA3
         {static FILE *used;static NSMutableSet *seen;if(!seen){seen=[NSMutableSet set];const char *path=getenv("DM_NVN_USED_SHADERS");if(path)used=fopen(path,"a");}
          if(used && ![seen containsObject:k]){[seen addObject:k];fprintf(used,"%s\n",k.UTF8String);fflush(used);}}
+#endif
+#if DM_BAYONETTA3
+        // Program resolution is also called by lookahead/PSO prediction. Binding
+        // a stage does not execute it: retain unsupported tessellation identity
+        // here and reject actual PATCHES before any draw. Ordinary triangles or
+        // an independent compute dispatch must not abort merely on this binding.
+        int captured_stage=nvn55_shader_stage(&p->sd[i]);
+        if(captured_stage==3 || captured_stage==4){
+            strlcpy(o->tesskeys[captured_stage-3],k.UTF8String,17);
+            static unsigned reported;if(reported++<12)MLOG("Bound tessellation stage retained: stage=%d key=%s; active patch draws require translation",captured_stage,k.UTF8String);
+            continue;
+        }
 #endif
         NSString *zh = g_shmap[k];
         if (!zh) {   // 不在包里：查 main 本体内嵌的计算核（nvn_builtin.h） | Not in the package: look up the compute kernels embedded in the main body (nvn_builtin.h)
@@ -2994,7 +3023,7 @@ static struct {
     uint64_t tex[6][128], samp[6][128], img[6][32];
     uint32_t st_vmask[2], st_wmask[2], st_ref[2];
     p_poly_offset po; float vp[16][4]; float dr[2]; int has_vp;
-    float blend_color[4], alpha_ref; int depth_clamp; int64_t copy_stride;p_depth_bounds depth_bounds;
+    float blend_color[4], alpha_ref; int depth_clamp; uint32_t patch_size; int64_t copy_stride;p_depth_bounds depth_bounds;
 } S;
 static void udc_note_draw(NvProg *pr) {
     if (R.has_rt) for (int i = 0; i < R.rt.n && i < 8; i++) if (R.rt.color[i]) { zskip_del(R.rt.color[i]->serial); g_zskip_cand_ok[i] = 0; }   // 零源集合：真画了就不再是全零 | Zero-source set: once really drawn it is no longer all zeros
@@ -3400,7 +3429,23 @@ static inline void args_sync_dirty(void) {
         g_args_reg_seen = reg; g_args_dirty_seen = dirty; args_dirty_all();
     }
 }
+#if DM_BAYONETTA3
+static _Thread_local int g_tess_binding; // 1 compute, 2 vertex, 3 fragment, 0 normal Metal 4.
+static void title_tess_use(id<MTLCommandEncoder> en,id<MTLResource> resource,MTLResourceUsage usage){
+    if(!g_tess_binding || !resource)return;
+    if(g_tess_binding==1)[(id<MTLComputeCommandEncoder>)en useResource:resource usage:usage];
+    else [(id<MTLRenderCommandEncoder>)en useResource:resource usage:usage stages:g_tess_binding==2?MTLRenderStageVertex:MTLRenderStageFragment];
+}
+#endif
 static void bind_args(id<MTLCommandEncoder> en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, uint64_t gpu, size_t off, NSUInteger ai) {
+#if DM_BAYONETTA3
+    if(g_tess_binding){
+        if(g_tess_binding==1)[(id<MTLComputeCommandEncoder>)en setBuffer:ab offset:off atIndex:ai];
+        else if(g_tess_binding==2)[(id<MTLRenderCommandEncoder>)en setVertexBuffer:ab offset:off atIndex:ai];
+        else [(id<MTLRenderCommandEncoder>)en setFragmentBuffer:ab offset:off atIndex:ai];
+        return;
+    }
+#endif
     if (nvn_stage == 5) enc_c_args((id<MTLComputeCommandEncoder>)en, gpu, ai);
     else enc_r_args((id<MTLRenderCommandEncoder>)en, metal_vertex ? MTLRenderStageVertex : MTLRenderStageFragment, gpu, ai);
 }
@@ -3460,7 +3505,7 @@ static inline int m3_use_seen(void *p, uint32_t u) {
 // 翻译器离线看不到贴图描述符，默认把每个槽当 2D：缓冲贴图（UE4 蒙皮的骨骼矩阵 Buffer<float4>）、3D / 立方体贴图在 Metal 里类型不符就读到 0
 // DM_NVN_TEXFACTS=file: record the texture type actually bound to each texture slot of each shader (key \t slot \t type word) as answers for offline translation (dmsh_from_dump.py merges them into tex of nvn/shader_facts.tsv).
 // The translator cannot see texture descriptors offline and treats every slot as 2D by default: texture buffers (UE4 skinning's bone matrices Buffer<float4>), 3D / cube textures read 0 on Metal when the type does not match
-static void texraw_sel_note(id<MTLTexture> t, uint64_t ser);   // 定义在 td_dump 之前 | defined before td_dump
+static void texraw_sel_note(id<MTLTexture> t, uint64_t ser,int tid);   // defined before td_dump
 // 顶点属性分量类型作答（与贴图类型同一文件，行格式「键 \t attr:<槽> \t uint|sint|float」）：翻译器离线不知道属性格式，缺省按浮点声明；
 // 整数属性（UE4 蒙皮的骨骼索引 RGBA8UI）按浮点声明后 Metal 把整数转成浮点值，着色器再 as_type<int> 就成了垃圾——主角身体整个消失
 // Vertex attribute component type answers (same file as texture types, line "key \t attr:<slot> \t uint|sint|float"): the translator cannot see attribute formats offline and declares float by default;
@@ -3509,8 +3554,12 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
         if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)
     #define USE_SAMP(r, u) do { (void)(u); if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)   // 采样器不是资源，不用声明 | samplers are not resources and need no declaration
 #else
+    #if DM_BAYONETTA3
+    #define USE(r, u) do { title_tess_use(en,(id<MTLResource>)(r),(u)); if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)
+#else
     #define USE(r, u) do { (void)(u); if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)
-    #define USE_SAMP(r, u) USE(r, u)
+#endif
+    #define USE_SAMP(r, u) do { (void)(u); if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)
 #endif
     // DM_NVN_PASSDUMP：每通道每阶段第一次新编时记着色器键（K）与各绑定的实际来源（B：UBO 地址 / 长度 / 前 4 个浮点，贴图号与序号或「哑」）
     // DM_NVN_PASSDUMP: on the first new encode per pass per stage, records the shader key (K) and the actual source of each binding (B: UBO address / length / first 4 floats, texture ID and serial, or 「哑」(dummy))
@@ -3557,7 +3606,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
                        (unsigned long)(t.parentTexture ? t.parentRelativeLevel : 0), (unsigned long)t.mipmapLevelCount,
                        (unsigned long)(t.parentTexture ? t.parentRelativeSlice : 0), (unsigned long)t.arrayLength, (unsigned long)t.textureType);
             if (t) texfacts_note(sh, reg, t.textureType);
-            if (t && nvn_stage == 1 && tid < g_ntreg) texraw_sel_note(t, g_treg[tid].t.serial);
+            if (t && nvn_stage == 1 && tid < g_ntreg) texraw_sel_note(t, g_treg[tid].t.serial,tid);
             if (!t) { t = dummy_tex(b->dtt, b->dpf); trid = g_dummy_tex_rid[b->dtt & 7][b->dpf & 3]; }
             slots[aid] = trid;
             USE(t, MTLResourceUsageRead);
@@ -3890,6 +3939,7 @@ static int state_op(uint32_t op, const void *a) {
         case OP_DEPTH_RANGE: { const p_depth_range *b = a; S.dr[0] = b->n; S.dr[1] = b->f; break; }
         case OP_DEPTH_CLAMP: S.depth_clamp=*(const uint32_t *)a!=0; break;
         case OP_DEPTH_BOUNDS: memcpy(&S.depth_bounds,a,sizeof S.depth_bounds);break;
+        case OP_PATCH_SIZE: memcpy(&S.patch_size,a,4);break;
         case OP_ALPHA_REF: memcpy(&S.alpha_ref,a,4); break;
         case OP_BLEND_COLOR: memcpy(S.blend_color, ((const p_blend_color *)a)->rgba, 16); break;
         case OP_COPY_STRIDE: S.copy_stride = ((const p_copy_stride *)a)->stride; break;
@@ -5098,6 +5148,7 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
     for (int i = 0; i < g_gh.n; i++) free(g_gh.c[i].S_); g_gh.n = 0;
 }
 #if DM_BAYONETTA3
+#include "nvn_metalfx_inputs.inc"
 static id<MTLTexture> g_depth_bounds_image;
 static int g_depth_bounds_frozen;
 static id<MTLBuffer> g_multi_args;
@@ -5109,28 +5160,39 @@ static void title_depth_snapshot(void){
     const view_t *v=R.rt.has_dview?&R.rt.dview:NULL;
     NSUInteger level=v&&v->set_levels?v->base_level:0,slice=v&&v->set_layers?v->min_layer:0;
     id<MTLTexture> depth=tex_mtl(R.rt.depth);
-    if(!depth || depth.sampleCount!=1 || depth.textureType!=MTLTextureType2D || slice || level || (depth.pixelFormat!=MTLPixelFormatDepth32Float && depth.pixelFormat!=MTLPixelFormatDepth32Float_Stencil8))MDIE("depth bounds needs single-sample 2D depth32 at level/layer zero");
-    static id<MTLBuffer> staging;NSUInteger row=depth.width*4,size=row*depth.height;
+    BOOL d16=depth.pixelFormat==MTLPixelFormatDepth16Unorm;
+    BOOL d32=depth.pixelFormat==MTLPixelFormatDepth32Float || depth.pixelFormat==MTLPixelFormatDepth32Float_Stencil8;
+    if(!depth || depth.sampleCount!=1 || (depth.textureType!=MTLTextureType2D && depth.textureType!=MTLTextureType2DArray) ||
+       level>=depth.mipmapLevelCount || slice>=depth.arrayLength || (!d16 && !d32))
+        MDIE("depth bounds unsupported attachment: ser=%llu format=%lu type=%lu samples=%lu level=%lu slice=%lu",(unsigned long long)R.rt.depth->serial,(unsigned long)depth.pixelFormat,(unsigned long)depth.textureType,(unsigned long)depth.sampleCount,(unsigned long)level,(unsigned long)slice);
+    NSUInteger width=mip_extent(depth.width,level),height=mip_extent(depth.height,level);
+    MTLPixelFormat snapshot_format=d16?MTLPixelFormatR16Unorm:MTLPixelFormatR32Float;
+    static id<MTLBuffer> staging;NSUInteger row=width*(d16?2:4),size=row*height;
     if(!staging || staging.length<size){if(staging)defer_obj_release(staging);staging=[g_dev newBufferWithLength:size options:MTLResourceStorageModePrivate];if(!staging)MDIE("depth bounds staging allocation");res_add(staging);}
-    if(!g_depth_bounds_image || g_depth_bounds_image.width!=depth.width || g_depth_bounds_image.height!=depth.height){
+    if(!g_depth_bounds_image || g_depth_bounds_image.width!=width || g_depth_bounds_image.height!=height || g_depth_bounds_image.pixelFormat!=snapshot_format){
         if(g_depth_bounds_image)defer_obj_release(g_depth_bounds_image);
-        MTLTextureDescriptor *d=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR32Float width:depth.width height:depth.height mipmapped:NO];d.storageMode=MTLStorageModePrivate;d.usage=MTLTextureUsageShaderRead;
+        MTLTextureDescriptor *d=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:snapshot_format width:width height:height mipmapped:NO];d.storageMode=MTLStorageModePrivate;d.usage=MTLTextureUsageShaderRead;
         g_depth_bounds_image=[g_dev newTextureWithDescriptor:d];if(!g_depth_bounds_image)MDIE("depth bounds snapshot allocation");res_add(g_depth_bounds_image);
     }
     BENC e=blit();
     atomic_fetch_add_explicit(&g_title_depth_copies,1,memory_order_relaxed);
     atomic_fetch_add_explicit(&g_title_depth_copy_bytes,2*size,memory_order_relaxed);
-    [e copyFromTexture:depth sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(depth.width,depth.height,1) toBuffer:staging destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:0 options:depth.pixelFormat==MTLPixelFormatDepth32Float_Stencil8?MTLBlitOptionDepthFromDepthStencil:MTLBlitOptionNone];
+    [e copyFromTexture:depth sourceSlice:slice sourceLevel:level sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(width,height,1) toBuffer:staging destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:0 options:depth.pixelFormat==MTLPixelFormatDepth32Float_Stencil8?MTLBlitOptionDepthFromDepthStencil:MTLBlitOptionNone];
     e=blit(); // Explicit intra-encoder producer/consumer barrier on Metal 4.
-    enc_b_copy_buffer_texture(e,staging,0,row,size,MTLSizeMake(depth.width,depth.height,1),g_depth_bounds_image,0,0,MTLOriginMake(0,0,0));
+    enc_b_copy_buffer_texture(e,staging,0,row,size,MTLSizeMake(width,height,1),g_depth_bounds_image,0,0,MTLOriginMake(0,0,0));
     static int once;if(!once++)MLOG("NVN stored-depth bounds: GPU depth-plane snapshot + fragment rejection enabled");
 }
+#include "nvn_tessellation.inc"
 #endif
 static void draw(const p_draw *dw, const p_draw_idx *di) {
+#if DM_BAYONETTA3
+    if((dw?dw->prim:di->prim)==NVN_DRAW_PRIMITIVE_PATCHES){title_tess_draw(dw,di);return;}
+#endif
     if (g_oq_open) g_oqi.nd_seen++;
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
 #if DM_BAYONETTA3
+    metalfx_capture_inputs(pr);
     g_noatt_draw=R.has_rt && !R.rt.depth;for(int i=0;i<R.rt.n;i++)g_noatt_draw&=R.rt.color[i]==NULL;
     if(g_noatt_draw){
         double w=S.has_vp?ceil(S.vp[0][0]+S.vp[0][2]):1,h=S.has_vp?ceil(S.vp[0][1]+S.vp[0][3]):1;
@@ -6239,7 +6301,7 @@ void mtl_exec(const uint8_t *p) {
             // Do not mark dirty if the state did not change (the game often re-sends the same program / state block / vertex format before each draw; the dirty flag only decides whether to re-fetch the pipeline / depth-stencil object, and equal values mean the same object)
             case OP_SCISSOR: case OP_BIND_PROGRAM: case OP_BIND_STATE: case OP_BIND_VATTR: case OP_BIND_VSTREAM: case OP_BIND_VBUF:
             case OP_BIND_UBO: case OP_BIND_SSBO: case OP_BIND_TEX: case OP_BIND_SAMP: case OP_BIND_IMG: case OP_STENCIL:
-            case OP_POLY_OFFSET: case OP_VIEWPORTS: case OP_DEPTH_RANGE: case OP_BLEND_COLOR: case OP_ALPHA_REF: case OP_DEPTH_CLAMP: case OP_DEPTH_BOUNDS: case OP_COPY_STRIDE:
+            case OP_POLY_OFFSET: case OP_VIEWPORTS: case OP_DEPTH_RANGE: case OP_BLEND_COLOR: case OP_ALPHA_REF: case OP_DEPTH_CLAMP: case OP_DEPTH_BOUNDS: case OP_PATCH_SIZE: case OP_COPY_STRIDE:
                 state_op(h.op, a); break;
             case OP_COPY_B2T: copy_b2t(a); break;
             case OP_COPY_T2B: copy_t2b(a); break;
@@ -6459,6 +6521,7 @@ static void texraw_save(id<MTLTexture> t, uint64_t ser) {
         // BC 压缩格式：按 4x4 块存（BC1/BC4 每块 8 字节，其余 16）；首行头里的「每行字节」即块行字节 | BC formats: stored by 4x4 blocks (BC1/BC4 8 bytes per block, the rest 16); the header's bytes-per-row is then the block-row size
         unsigned pfv = (unsigned)t.pixelFormat; int bc = pfv >= 130 && pfv <= 153; size_t blk = (pfv == 130 || pfv == 131 || pfv == 140 || pfv == 141) ? 8 : 16;
         size_t row = bc ? (w + 3) / 4 * blk : w * bpp, img = bc ? row * ((h + 3) / 4) : row * h;
+        for(int format=0x79;format<=0x94;format++){uint32_t metal;uint8_t channels[4];nvn_fmt_to_mtl(format,&metal,channels);if(metal==t.pixelFormat){int bw,bh;int bytes=nvn_fmt_bpb(format,&bw,&bh);row=((w+bw-1)/bw)*bytes;img=row*((h+bh-1)/bh);break;}}
         NSUInteger ns = t.textureType == MTLTextureTypeCube ? 6 : t.textureType == MTLTextureTypeCubeArray ? t.arrayLength * 6 : t.textureType == MTLTextureType2DArray ? t.arrayLength : 1;   // 立方体 / 数组：逐片存（深度按片数叠加） | cube / array: saved slice by slice (depth = slices stacked)
         id<MTLBuffer> buf = [g_dev newBufferWithLength:img * dz * ns options:MTLResourceStorageModeShared];
         id<MTLCommandBuffer> cb = q_cb(); id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
@@ -6471,11 +6534,34 @@ static void texraw_save(id<MTLTexture> t, uint64_t ser) {
 }
 // DM_NVN_TEXRAW=sel:WxH:fmt（可多项）：绑定时记下该帧片元阶段用到的、尺寸与 Metal 格式都匹配的贴图，帧末随 TEXDUMP 一起按原始字节存
 // DM_NVN_TEXRAW=sel:WxH:fmt (several allowed): at bind time note the textures used by the fragment stage in that frame whose size and Metal format match, saved as raw bytes at frame end together with TEXDUMP
-static void texraw_sel_note(id<MTLTexture> t, uint64_t ser) {
+static int g_inspect_astc;static size_t g_inspect_bytes;static NSMutableSet *g_inspect_seen;
+// Debugger entry point: explicit one-frame capture, using the launcher's private
+// --inspect-frame directory. No diagnostic render changes or persistent skip.
+long dm_gfx_inspect_next(int astc){
+    if(!g_td_path)return -1;
+    g_pd_a0=(long)atomic_load(&g_cur_frame)+2;g_pd_a1=g_pd_a0;g_td_frame=g_pd_a0;g_td_done=0;
+    [g_td_list removeAllObjects];[g_texraw_sel removeAllObjects];g_td_depth=nil;
+    g_inspect_astc=astc;g_inspect_bytes=0;g_inspect_seen=[NSMutableSet set];
+    MLOG("[visual-inspect] armed frame=%ld ASTC=%d",g_td_frame,astc);return g_td_frame;
+}
+static void texraw_sel_note(id<MTLTexture> t, uint64_t ser,int tid) {
     static int inited, n; static struct { unsigned w, h, f; } sel[8];
     if (!inited) { inited = 1; for (const char *q = getenv("DM_NVN_TEXRAW"); q && *q && n < 8; q = strchr(q, ',') ? strchr(q, ',') + 1 : q + strlen(q))
         if (!strncmp(q, "sel:", 4) && sscanf(q + 4, "%ux%u:%u", &sel[n].w, &sel[n].h, &sel[n].f) == 3) n++; }
-    if (!n || !t || g_td_frame < 0 || g_td_done || (long)atomic_load(&g_cur_frame) != g_td_frame) return;
+    if (!t || g_td_frame < 0 || g_td_done || (long)atomic_load(&g_cur_frame) != g_td_frame) return;
+    if(g_inspect_astc && tid>0 && tid<g_ntreg && ![g_inspect_seen containsObject:@(ser)]){
+        const tex_t *original=&g_treg[tid].t;unsigned format=original->d.format;
+        if((format==0x7d || format==0x8b || (format>=0x79 && format<=0x94 && original->d.width<=64 && original->d.height<=64)) && original->L.size<=8*1024*1024 && g_inspect_bytes+original->L.size<=64*1024*1024 && g_inspect_seen.count<64 && original->mem){
+            [g_inspect_seen addObject:@(ser)];g_inspect_bytes+=original->L.size;
+            NSString *directory=[@(g_td_path) stringByDeletingLastPathComponent];NSString *prefix=[directory stringByAppendingPathComponent:[NSString stringWithFormat:@"source-%llu",(unsigned long long)ser]];
+            NSData *source=[NSData dataWithBytes:original->mem length:original->L.size];[source writeToFile:[prefix stringByAppendingString:@".bin"] atomically:YES];
+            NSDictionary *meta=@{@"serial":@(ser),@"tid":@(tid),@"format":@(format),@"width":@(original->d.width),@"height":@(original->d.height),@"depth":@(original->d.depth),@"levels":@(original->d.levels),@"flags":@(original->d.flags),@"target":@(original->d.target),@"pkg_block_h":@(original->d.pkg_block_h),@"pkg_tile_w":@(original->d.pkg_tile_w),@"size":@(original->L.size),@"tileH":@(original->L.tileH),@"layout":[NSData dataWithBytes:original->layout length:8].description};
+            [[NSJSONSerialization dataWithJSONObject:meta options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[prefix stringByAppendingString:@".json"] atomically:YES];
+            if(!g_texraw_sel)g_texraw_sel=[NSMutableDictionary dictionary];g_texraw_sel[@(ser)]=t;
+            if(t.textureType==MTLTextureType2D)[g_td_list addObject:@[t,@(ser),@0]];
+        }
+    }
+    if(!n)return;
     for (int i = 0; i < n; i++) if (t.width == sel[i].w && t.height == sel[i].h && (unsigned)t.pixelFormat == sel[i].f) {
         if (!g_texraw_sel) g_texraw_sel = [NSMutableDictionary dictionary];
         if (g_texraw_sel.count < 16) g_texraw_sel[@(ser)] = t; return; }
@@ -6721,8 +6807,29 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTe
     [en endEncoding];
     return 1;
 }
+#include "nvn_metalfx.inc"
 static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, const int crop[4], int uv_i) {
-    id<MTLTexture> src = present_src(src0);
+    id<MTLTexture> fxsrc = nil;
+    if (metalfx_enabled()) {
+#if TARGET_OS_IPHONE
+        NSUInteger content_w=src0.width,content_h=src0.height;
+        BOOL eligible=YES;
+        if(crop && (crop[2] || crop[3])) {
+            if(crop[0]<0 || crop[1]<0 || crop[2]<=0 || crop[3]<=0 ||
+               (uint64_t)crop[0]+crop[2]>src0.width || (uint64_t)crop[1]+crop[3]>src0.height)
+                MDIE("Invalid MetalFX source content rectangle");
+            content_w=crop[2];content_h=crop[3];
+            if(crop[0] || crop[1]) {eligible=NO;RED_ONCE(61,"MetalFX nonzero crop origin: normal aspect-fit presentation retained");}
+        }
+        if(eligible)fxsrc=metalfx_spatial(cb,present_src(src0),uv_i,dst.width,dst.height,content_w,content_h);
+#else
+        if (crop && (crop[0] || crop[1] || (crop[2] && crop[2] != src0.width) || (crop[3] && crop[3] != src0.height)))
+            MDIE("MetalFX requires the complete source; crop=%d,%d %dx%d texture=%lux%lu", crop[0],crop[1],crop[2],crop[3],(unsigned long)src0.width,(unsigned long)src0.height);
+        fxsrc = metalfx_spatial(cb, present_src(src0), uv_i, dst.width, dst.height, src0.width, src0.height);
+#endif
+        if(fxsrc)crop = NULL;
+    }
+    id<MTLTexture> src = present_src(fxsrc ?: src0);
     NSUInteger cx = 0, cy = 0, cw = src.width, ch = src.height;
     if (crop && (crop[2] || crop[3])) {
         if (crop[0] < 0 || crop[1] < 0 || crop[2] <= 0 || crop[3] <= 0 ||
@@ -6831,6 +6938,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     id<CAMetalDrawable> dr = supplied ? supplied : [layer nextDrawable];
     if (!supplied) g_drawable_ns += now_ns() - dt0;
     if (!dr) return 0;
+#if DM_BAYONETTA3
+    g_fx_present_input=metalfx_input_for_frame(frame);
+#endif
     int alloc_i = (int)(ticket % 3);
     if (g_present_alloc_fence[alloc_i]) {
         uint64_t w0 = now_ns(); pthread_mutex_lock(&g_pq_mu);
@@ -6847,6 +6957,40 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     CBUF cb = g_present_cb[alloc_i];
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
     if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) { [cb endCommandBuffer]; [g_q4 signalDrawable:dr]; return 0; }
+#if DM_BAYONETTA3
+    if(g_fx_generated[alloc_i] && metalfx_enabled()){
+        id<CAMetalDrawable> generated=[layer nextDrawable];
+        if(generated){id<MTLCommandBuffer> interpolation=[g_q commandBuffer];
+            if(present_encode(interpolation,g_fx_generated[alloc_i],generated.texture,NULL)){
+                [generated addPresentedHandler:^(id<MTLDrawable> d){if(d.presentedTime>0)atomic_fetch_add(&g_fx_generated_presented,1);}];
+                [interpolation presentDrawable:generated afterMinimumDuration:period*.5];[interpolation commit];
+                // Correctness-first presentation order. No game/source release
+                // until FX and the generated copy have completed. Optimize this
+                // CPU wait only after measured dual-present pacing is validated.
+                [interpolation waitUntilCompleted];if(interpolation.error)MDIE("MetalFX generated present: %s",interpolation.error.description.UTF8String);
+                period*=.5;
+            }
+        }
+    }
+#endif
+    // Paired same-frame luminance from the guest image and final drawable.
+    // Diagnostic only; no readback or file I/O in ordinary playback.
+    static FILE *luma_log;static int luma_init;static id<MTLBuffer> luma_buffers[3];
+    if(!luma_init++){const char *path=getenv("DM_PRESENT_LUMA");if(path){luma_log=fopen(path,"w");if(luma_log)fputs("frame\tmetalfx\traw_luma\toutput_luma\toutput_width\toutput_height\n",luma_log);}}
+    id<MTLBuffer> luma_rb=nil;int luma_fx=metalfx_enabled();NSUInteger luma_dw=dr.texture.width,luma_dh=dr.texture.height;
+    if(luma_log){
+        static id<MTLComputePipelineState> pso;static id<MTL4ArgumentTable> table;
+        if(!pso){NSError *error=nil;id<MTLLibrary> lib=[g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;kernel void luma(texture2d<float,access::read> src[[texture(0)]],device float4*out[[buffer(0)]],uint2 p[[thread_position_in_grid]]){if(p.x>=32||p.y>=18)return;uint2 q=uint2((float2(p)+.5)*float2(src.get_width(),src.get_height())/float2(32,18));out[p.y*32+p.x]=src.read(q);}" options:nil error:&error];
+            if(!lib)MDIE("Luminance diagnostic shader: %s",error.localizedDescription.UTF8String);pso=[g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"luma"] error:&error];
+            MTL4ArgumentTableDescriptor *td=[MTL4ArgumentTableDescriptor new];td.maxTextureBindCount=1;td.maxBufferBindCount=1;table=[g_dev newArgumentTableWithDescriptor:td error:&error];if(!pso||!table)MDIE("Luminance diagnostic pipeline");}
+        if(!luma_buffers[alloc_i]){luma_buffers[alloc_i]=[g_dev newBufferWithLength:32*18*16*2 options:MTLResourceStorageModeShared];res_add(luma_buffers[alloc_i]);res_commit();}
+        luma_rb=luma_buffers[alloc_i];
+        for(int sample=0;sample<2;sample++){BENC en=enc_b_begin(cb);
+            [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+            [table setTexture:(sample?dr.texture:present_src(src)).gpuResourceID atIndex:0];[table setAddress:luma_rb.gpuAddress+sample*32*18*16 atIndex:0];
+            [en setArgumentTable:table];[en setComputePipelineState:pso];[en dispatchThreads:MTLSizeMake(32,18,1) threadsPerThreadgroup:MTLSizeMake(16,9,1)];enc_b_end(en);
+        }
+    }
     id<MTLBuffer> rl_rb = g_rl_rb; NSUInteger rl_w = g_rl_w, rl_h = g_rl_h; int rl_slot = g_rl_slot; g_rl_rb = nil;
     if (rl_rb) { BENC rb_enc = enc_b_begin(cb); [rb_enc barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [rb_enc copyFromTexture:src sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(g_rl_x0, g_rl_y0, 0) sourceSize:MTLSizeMake(rl_w, rl_h, 1) toBuffer:rl_rb destinationOffset:0 destinationBytesPerRow:rl_w * 4 destinationBytesPerImage:rl_w * rl_h * 4]; enc_b_end(rb_enc); }
     unsigned long long rl_n = g_present_n, rl_tns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); FILE *rl_f = g_rl_f; pthread_mutex_t *rl_mu = g_rl_mu;
@@ -6893,6 +7037,12 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
                 long cf = (long)atomic_load(&g_cur_frame); g_pd_a0 = cf; g_pd_a1 = cf + 2;
                 MLOG("【红】黑帧触发器：出图 %llu 亮度 %.1f → %.1f（当前帧 %ld，通道转储对准 %ld–%ld，后 3 帧截图 → %s）", rl_n, prev_lum, lum, cf, cf, cf + 2, gd); }
             prev_lum = lum; atomic_store(&g_rl_busy[rl_slot], 0); }
+        if(luma_rb){const float *pixels=luma_rb.contents;double a=0,b=0;
+            for(int j=0;j<32*18;j++){a+=pixels[j*4]+pixels[j*4+1]+pixels[j*4+2];b+=pixels[(j+32*18)*4]+pixels[(j+32*18)*4+1]+pixels[(j+32*18)*4+2];}
+            double raw=a*255/(32.0*18*3),out=b*255/(32.0*18*3);
+            flockfile(luma_log);fprintf(luma_log,"%llu\t%d\t%.4f\t%.4f\t%lu\t%lu\n",(unsigned long long)frame,luma_fx,raw,out,(unsigned long)luma_dw,(unsigned long)luma_dh);fflush(luma_log);funlockfile(luma_log);
+            if(raw>10 && out<raw*.35)MLOG("[present-luma] black/dark output frame=%llu raw=%.2f output=%.2f MetalFX=%d",(unsigned long long)frame,raw,out,luma_fx);
+        }
         pthread_mutex_lock(&g_pq_mu); if (ticket > g_pq_done) g_pq_done = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
     }];
 #if !DM_NVN_M3
@@ -6927,6 +7077,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     uint64_t pn = ticket;   // 按游戏出图序号（票号）记上屏时刻：hle 的上屏统计按「游戏第 n 次出图」取；显示节拍路径里实际出图次数 ≠ 游戏出图次数（旧帧会被合并丢弃） | Record the present time by the game's present sequence number (ticket number): hle's present statistics are taken by "the game's nth present"; in the display link path the actual present count != the game's present count (old frames get merged and dropped)
     [dr addPresentedHandler:^(id<MTLDrawable> d) {   // 真实呈现时刻（屏幕上真正换上这一帧的时间，CACurrentMediaTime 基准） | Actual presentation time (the time this frame is really put on screen, CACurrentMediaTime base)
         CFTimeInterval tt = d.presentedTime;
+#if DM_BAYONETTA3
+        if(tt>0)atomic_fetch_add(&g_fx_real_presented,1);
+#endif
         g_pres[pn % PRING] = (pres_ent){pn, tt > 0 ? tt : -1};
     }];
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫

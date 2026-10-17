@@ -14,8 +14,9 @@ static int nvn55_write_storage(const tex_t *t,unsigned level,unsigned layer,cons
         uint32_t rb,rows,slices,bp;uint64_t base;unsigned th,td;
         unsigned sl=t->d.target==2?layer:layer+r->zoffset+z;
         if(nvn_deswizzle_geom(&t->d,level,sl,&rb,&rows,&slices,&base,&th,&td,&bp))return 0;
+        uint32_t storage_row=nvn_tex_level_row_bytes(&t->d,level);
         for(size_t y=0;y<hb;y++)for(size_t x=0;x<wb;x++){
-            uint64_t o=base+nvn_bl_offset(r->xoffset/bw*bpb+x,r->yoffset/bh+y,t->d.target==2?r->zoffset+z:0,rb,rows,th,td);
+            uint64_t o=base+nvn_bl_offset(r->xoffset/bw*bpb+x,r->yoffset/bh+y,t->d.target==2?r->zoffset+z:0,storage_row,rows,th,td);
             if(o>=t->L.size)return 0;t->mem[o]=src[z*img+y*row+x];
         }
     }

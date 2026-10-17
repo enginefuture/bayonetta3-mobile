@@ -14,7 +14,7 @@ GFX=$(sort $(wildcard ../gfx/*.c ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S ..
 GFX_H=$(sort $(wildcard ../gfx/nvn/*.h ../gfx/nvn/include/*.h ../gfx/tex/*.h))
 GFX_H+=$(sort $(wildcard ../gfx/nvn/*.inc))
 LIBDEFLATE=../third_party/libdeflate/lib/deflate_decompress.c ../third_party/libdeflate/lib/zlib_decompress.c ../third_party/libdeflate/lib/adler32.c ../third_party/libdeflate/lib/utils.c ../third_party/libdeflate/lib/arm/cpu_features.c
-FRAMEWORKS=-framework Cocoa -framework QuartzCore -framework Metal -framework AudioToolbox -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network -framework AVFoundation -framework CoreMedia -framework CoreVideo
+FRAMEWORKS=-framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network -framework AVFoundation -framework CoreMedia -framework CoreVideo
 .DEFAULT_GOAL := dmhost_bayonetta3
 # Dependency-tracked objects stay outside the vendored source tree.
 OBJDIR := ../../../../work/build/macos-objects

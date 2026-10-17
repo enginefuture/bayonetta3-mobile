@@ -13,7 +13,11 @@ cmd=['clang','-O1','-g','-Wall','-Wno-unused-function','-DDM_BAYONETTA3=1','-DDM
      '-mmacosx-version-min=26.0','-fobjc-arc','-I'+str(gfx/'nvn/include'),
      str(ROOT/'tests/test_indirect_batch.m'),str(ROOT/'third_party/blade2-mobile/dm/host/crash.c'),*objects,
      '-o',str(ROOT/'work/test-indirect-batch')]
-for framework in ('Metal','Foundation','QuartzCore','ImageIO','CoreGraphics','UniformTypeIdentifiers'):
+for framework in ('Metal','MetalFX','Foundation','QuartzCore','ImageIO','CoreGraphics','UniformTypeIdentifiers'):
     cmd+=['-framework',framework]
 subprocess.run(cmd,check=True)
 subprocess.run([str(ROOT/'work/test-indirect-batch')],check=True)
+
+rejected=subprocess.run([str(ROOT/'work/test-indirect-batch'),'--active-patch'],capture_output=True,text=True)
+assert rejected.returncode!=0 and 'Tessellation without a bound program' in rejected.stderr,rejected.stderr
+print('Invalid patch draw without a program fails visibly; dormant stage metadata does not abort prediction')

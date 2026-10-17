@@ -14,6 +14,7 @@ typedef struct {
     uint8_t has_swizzle, swizzle[4], ds_mode;
 #if DM_BAYONETTA3
     int8_t pkg_block_h;
+    uint8_t pkg_tile_w; // packaged layout byte 1: sparse row alignment, log2 GOBs
 #else
     int pkg_block_h;
 #endif
@@ -28,6 +29,7 @@ typedef struct {
 
 void nvn_tex_layout(const nvn_texdesc *d, nvn_texlayout *o);
 uint64_t nvn_tex_level_offset(const nvn_texdesc *d, unsigned level);
+uint32_t nvn_tex_level_row_bytes(const nvn_texdesc *d,unsigned level);
 int nvn_fmt_bpb(int format, int *bw, int *bh);   // 每块字节（0 = 未知格式），块宽高 | Bytes per block (0 = unknown format), block width and height
 // 第 level 级实际使用的块高 / 块深（log2 GOB 数）：贴图级块高按该级行数（块行）收缩，解排布逐级用它
 // Block height / block depth actually used by level `level` (log2 of the GOB count): the per-level block height shrinks with that level's row count (block rows), and deswizzling uses it level by level
