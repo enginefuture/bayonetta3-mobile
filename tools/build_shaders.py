@@ -23,6 +23,7 @@ def snapshot_pairs(source, destination):
     destination.write_text('\n'.join(sorted(edges))+'\n')
 
 def main():
+    from shader_interfaces import build_receipt
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--jobs',type=int,default=6)
     p.add_argument('--used-only',action='store_true',help='Build shaders observed by the native submit path')
@@ -63,6 +64,8 @@ def main():
     failed=[r for r in results if r['st']!='ok']
     if failed:p.exit(1,f"{len(failed)} shader builds failed; see _b_build.json in b-{version}\n")
     run([sys.executable,T/'c1_guard.py',w/'build/cache/metal_shader_cache'/('b-'+version),shader/'c1_full.tsv'])
+    interfaces=build_receipt(w/'build/cache/metal_shader_cache'/('b-'+version),version)
+    print(f"Complete varying ABI checked: {interfaces['vertices']} vertex / {interfaces['fragments']} fragment libraries, {len(interfaces['required'])} locations")
     print(f"Supported shader generation finished; {len(capture['unsupported'])} captured tessellation stages remain unsupported. Rebuild host before running this chain.")
 
 if __name__=='__main__':main()

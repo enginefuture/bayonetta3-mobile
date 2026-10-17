@@ -30,6 +30,8 @@ test:
 	./work/test-descriptors
 	clang -Wall -Wextra -Ithird_party/blade2-mobile/dm/gfx/nvn/include -o work/test-program-bind tests/test_program_bind.c
 	./work/test-program-bind
+	clang -Wall -Wextra -o work/test-fact-set tests/test_fact_set.c
+	./work/test-fact-set
 	clang -Wall -Wextra -Ithird_party/blade2-mobile/dm/gfx/nvn/include -o work/test-texels tests/test_texels.c third_party/blade2-mobile/dm/gfx/nvn/nvn_tex.c third_party/blade2-mobile/dm/gfx/tex/nvn_deswizzle.c
 	./work/test-texels
 
@@ -43,3 +45,5 @@ test-gpu:
 	$(PY) tests/run_depth_bounds.py
 	$(PY) tests/run_indirect.py
 	$(PY) tests/run_attachmentless.py
+	$(PY) tests/run_gpu_profile.py
+	$(PY) tests/run_indirect_batch.py

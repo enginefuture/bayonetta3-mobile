@@ -46,14 +46,14 @@ Build ID/哈希不符合 `config/bayonetta3-1.2.0.json` 时，改写立即停止
 
 ## 3. 准备影片缓存
 
-实测 AVFoundation 路径无法直接解码游戏 VP9/WebM。先由自己的原片生成开场所需 AVC 缓存：
+实测 AVFoundation 路径无法直接解码游戏 VP9/WebM。先由自己的完整影片目录生成 AVC 缓存，包括教学和技能树子目录：
 
 ```sh
-.venv/bin/python tools/prepare_media.py work/game/RomFS/movie/ev0000.webm
-.venv/bin/python tools/prepare_media.py work/game/RomFS/movie/ev0005.webm
+.venv/bin/python tools/prepare_media.py work/game/RomFS/movie --jobs 2
+.venv/bin/python tools/prepare_media.py work/game/RomFS/movie --check
 ```
 
-后续场景若提示缺影片缓存，把日志中的原片路径传给同一工具。缓存位于 `work/media/`。工具检查帧数、尺寸、时间和支持的范围元数据；AVC 为有损转换，画面/音频质量仍须检查。缺缓存会中止，不以空白场景替代影片。
+缓存及清单位于 `work/media/`。工具检查帧数、尺寸、时间和支持的范围元数据后，才原子发布缓存及包含原片/输出校验和的回执；重试复用有效缓存。AVC 为有损转换，画面/音频质量仍须检查。启动默认核对全部原片和缓存哈希，避免到后续章节才因未准备影片而退出。`--skip-media-preflight` 仅为显式诊断例外，不能让缺失缓存的场景正常播放。也可传入单个原片路径定点修复。不会下载或上传游戏数据。
 
 ## 4. 从自己的文件建立着色器库
 
@@ -88,6 +88,19 @@ make mac
 
 针对具体问题使用 `--trace-fs` 或 `--trace-nvn`。日志保持私有，仅分享脱敏错误摘要。采集画面和进程存活时长不代表可玩；开场 HUD 指标也不能代表战斗或全流程性能。
 
+战斗和章节切换诊断：
+
+```sh
+.venv/bin/python tools/run_mac.py --seconds 0 --metal-hud --profile
+.venv/bin/python tools/analyze_run.py work/run/log/native-YOUR-RUN.log
+```
+
+每次启动生成原始 `.log`、影片 `.preflight.json`、含宿主/着色器身份与选项的 `.session.json`、`.events.jsonl` 和退出 `.summary.json`。即使原生宿主中止，父进程仍记录退出原因，区分缺影片、着色器/管线失败、原生崩溃和诊断超时；这些摘要不表示可玩验收通过。`--profile` 增加逐帧 `.frames.tsv`、长帧诊断及深度复制次数/传输量。逐帧表默认上限 32 MiB（`--profile-log-mib 1..256`），达到上限明确记录，普通统计窗口继续。分析器输出私有 `.analysis.json`；被截断的前段采样不能当作整次性能数据。
+
+可另开 `--gpu-profile --gpu-profile-every 60`，将抽样 Metal 4 渲染/计算/复制 encoder 时间戳写入 `.passes.tsv`（上限 32 MiB）。精确探针可能拆分 encoder 并改变性能，须与 FPS 对比运行分开。不同 encoder 时间跨度可能重叠，不能相加。`-1` 表示没有可用时间戳（包括空通道/仅清屏的渲染通道），不代表 GPU 成本为零。所有日志和采集数据都保留在忽略的 `work/`。
+
+Metal 4 路径会在已证明只读的命令段内批量准备 GPU 间接绘制参数；计数仍由 GPU 读取，保留绘制、画质与游戏逻辑。复制、上传、计算、清除、事件、查询、附件改变、未知反射及可能覆盖输入的写入都会截断批次。`--indirect-batch 0` 选择原准备路径作为对照。进程内诊断 A/B 可加 `--indirect-batch-control work/run/batch-policy.txt`，向这个本地文件写入 `0` 或 `1`；每 60 帧轮询，切换日志包含实际帧号。保持视角/场景及 HUD/探针设置一致，丢弃切换窗口，对照 `@frame_ms`、`@gpu_ms`、`@passes` 和 `@indirect_batch_*`，不要把精确探针运行与正常 FPS 运行混比。
+
 ## 6. 实验性 iOS 构建
 
 先完成 Mac 采集/严格运行循环，再编译已观察路径的 iPhoneOS 着色器和未签名 App：
@@ -119,3 +132,5 @@ python3 tools/audit_public.py --all-history
 ```
 
 前两项使用合成输入，不需要游戏文件。审计检查暂存/索引，`--all-history` 还检查可达历史中的对象。不要强制加入 `work/`、密钥、采集、安装包或游戏内容，详见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+
+着色器构建现在先解码**全部已采集片元输入**（即使使用 `--used-only`），再为顶点程序导出完整兼容的插值接口；不再要求先遇到每一种阶段配对。构建核对实际生成的图形接口并写入私有 `_interfaces.json` 完整性回执，普通 Mac 启动检查回执及对应库；预检失败时重新构建着色器和宿主。尚未采集的程序、未支持的细分阶段仍是独立限制。回执和游戏派生库均保留在忽略的 `work/`。

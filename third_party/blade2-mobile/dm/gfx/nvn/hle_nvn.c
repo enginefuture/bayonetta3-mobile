@@ -1101,6 +1101,12 @@ static void dump_frame(void) {
         if (g_frame <= (uint64_t)nframes && o < sizeof line - 96) o += snprintf(line + o, sizeof line - o, " %s=%llu", nvn_names[i] + 3, d);
     }
     if (g_tsv) fflush(g_tsv);
+    // Bounded diagnostics: stop the detailed file, keep ordinary summaries.
+    if (g_tsv) {
+        static uint64_t cap;
+        if (!cap) { const char *e=getenv("DM_NVN_TSV_MAX_MB"); long mb=e?strtol(e,NULL,10):32; if(mb<1||mb>256)mb=32; cap=(uint64_t)mb*1048576; }
+        if ((uint64_t)ftello(g_tsv)>=cap) { LOG("[diagnostic] frame_log_limit_reached bytes=%llu",(unsigned long long)cap);fclose(g_tsv);g_tsv=NULL; }
+    }
     if (g_frame <= (uint64_t)nframes) LOG("[nvn] %s %llu：%u 个函数 %llu 次调用 |%s", g_frame ? "帧" : "初始化", g_frame, nfn, total, line);
     else if (g_frame % 300 == 0) LOG("[nvn] 帧 %llu：%u 个函数 %llu 次调用", g_frame, nfn, total);
     g_frame++; cs_dump();
@@ -1342,6 +1348,14 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
         trow(f, "@rt_load_mb", (l - pl) / 1048576.0); trow(f, "@rt_store_mb", (st - pst) / 1048576.0); trow(f, "@pass_full_rw", (double)(fu - pf));
         uint64_t udc = mtl_udc_saved_bytes(); trow(f, "@unwritten_dc_mb", (udc - pudc) / 1048576.0);
         pl = l; pst = st; pf = fu; pudc = udc;
+        { extern void mtl_title_copy_stats(uint64_t *,uint64_t *);
+          static uint64_t pc,pb,wc,wb; uint64_t c,b;mtl_title_copy_stats(&c,&b);
+          trow(f,"@depth_snapshots",(double)(c-pc));trow(f,"@depth_snapshot_mb",(b-pb)/1048576.0);pc=c;pb=b;
+          if(f%300==0){LOG("[nvn] depth-copy window frame=%llu snapshots=%llu transfer_mb=%.2f",(unsigned long long)f,(unsigned long long)(c-wc),(b-wb)/1048576.0);wc=c;wb=b;} }
+#if DM_BAYONETTA3
+        {extern void mtl_title_batch_stats(uint64_t *,uint64_t *);static uint64_t pg,pr;uint64_t groups,requests;mtl_title_batch_stats(&groups,&requests);
+         trow(f,"@indirect_batch_groups",groups-pg);trow(f,"@indirect_batch_requests",requests-pr);pg=groups;pr=requests;}
+#endif
         static uint64_t pae, par; uint64_t ae_, ar_; mtl_args_stats(&ae_, &ar_);
         trow(f, "@args_enc", (double)(ae_ - pae)); trow(f, "@args_reuse", (double)(ar_ - par)); pae = ae_; par = ar_;
         static uint64_t puc, pus; uint64_t uc_, us_; mtl_use_stats(&uc_, &us_);

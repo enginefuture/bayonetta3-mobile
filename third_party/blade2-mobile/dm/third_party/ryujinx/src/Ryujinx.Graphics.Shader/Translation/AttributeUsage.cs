@@ -157,6 +157,19 @@ namespace Ryujinx.Graphics.Shader.Translation
             return bit;
         }
 
+        // Offline separate-stage ABI: use the same initialization and original
+        // stores as SetNextStage, without requiring each future pair to be observed.
+        public void RequireOutputComponents(UInt128 components)
+        {
+            NextInputAttributesComponents |= components;
+            for (int i = 0; i < 32; i++)
+            {
+                if (((components >> (i * 4)) & 15) == 0) continue;
+                UsedOutputAttributes |= 1 << i;
+                _nextUsedInputAttributes |= 1 << i;
+            }
+        }
+
         public void SetAllInputUserAttributes()
         {
             UsedInputAttributes |= Constants.AllAttributesMask;

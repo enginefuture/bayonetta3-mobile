@@ -22,6 +22,7 @@ using Ryujinx.Graphics.Shader.Translation;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -115,6 +116,21 @@ static class SwshXlate
             Console.WriteLine(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ms.ToArray()))[..16].ToLowerInvariant());
             return 0;
         }
+        if (args.Length == 3 && args[0] == "--scan-interfaces")
+        {
+            UInt128 components = 0; int count = 0;
+            foreach (JsonObject job in JsonNode.Parse(File.ReadAllText(args[1])).AsArray())
+            {
+                if ((string)job["stage"] != "ps") throw new InvalidDataException("Expected fragment scan job");
+                var acc = new Accessor(File.ReadAllBytes((string)job["code"]), job);
+                var ctx = Translator.CreateContext(0, acc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, TranslationFlags.DebugMode));
+                if (ctx.Stage != ShaderStage.Fragment) throw new InvalidDataException("Fragment stage mismatch");
+                components |= ctx.InputAttributeComponents; count++;
+            }
+            File.WriteAllText(args[2], new JsonObject { ["components"] = components.ToString("X32"), ["fragment_count"] = count }.ToJsonString());
+            Console.WriteLine($"Scanned {count} original fragment programs; varying components {components:X32}");
+            return 0;
+        }
         var jobs = JsonNode.Parse(File.ReadAllText(args[0])).AsArray(); string outDir = args[1]; Directory.CreateDirectory(outDir);
         int ok = 0, bad = 0;
         foreach (JsonObject job in jobs)
@@ -139,6 +155,8 @@ static class SwshXlate
                         var nctx = Translator.CreateContext(0, nacc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags & ~TranslationFlags.Compute));
                         ctx.SetNextStage(nctx);
                     }
+                if (job["output_components"] is JsonNode components)
+                    ctx.RequireVertexOutputComponents(UInt128.Parse((string)components, NumberStyles.HexNumber));
                 ShaderProgram p = ctx.Translate();
                 File.WriteAllBytes(Path.Combine(outDir, key + ".spv"), p.BinaryCode);
                 var res = new JsonObject

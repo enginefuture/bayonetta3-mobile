@@ -26,6 +26,12 @@ int main(void) {
     assert(device.before==0xa5a5a5a5a5a5a5a5ull && device.after==device.before && !strcmp(device.name,"DeviceOut"));
     assert(h_bayo_OutputChannels()==2);
     h_bayo_DeviceVolume("DeviceOut",0.25f);assert(h_bayo_GetDeviceVolume("DeviceOut")==0.25f && dm_host_audio_device_gain()==0.25f);
+    // Chapter transitions may repeat a recording policy call. Neither direction
+    // may touch the independently configured real playback gain.
+    h_bayo_MuteRecording();h_bayo_MuteRecording();
+    assert(atomic_load(&bayo_recording_muted)==1 && dm_host_audio_device_gain()==0.25f);
+    h_bayo_UnmuteRecording();h_bayo_UnmuteRecording();
+    assert(atomic_load(&bayo_recording_muted)==0 && dm_host_audio_device_gain()==0.25f);
     int count=-1;struct {uint64_t before;UserHandle h;uint64_t after;} user={.before=123,.after=456};
     h_bayo_PopUsers(&count,&user.h,1);assert(count==0);h_bayo_PushUsers();Uid uid;
     assert(h_bayo_ListPushed(&uid,1)==1 && !memcmp(&uid,&k_uid,sizeof uid));

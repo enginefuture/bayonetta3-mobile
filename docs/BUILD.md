@@ -46,14 +46,14 @@ Rewriting rejects a Build ID/hash mismatch against `config/bayonetta3-1.2.0.json
 
 ## 3. Prepare movie caches
 
-The tested AVFoundation path does not directly decode the game's VP9/WebM files. Generate local AVC caches from your originals, initially including the opening movies:
+The tested AVFoundation path does not directly decode the game's VP9/WebM files. Generate local AVC caches from the complete original movie directory, including its tutorial and skill-tree subdirectories:
 
 ```sh
-.venv/bin/python tools/prepare_media.py work/game/RomFS/movie/ev0000.webm
-.venv/bin/python tools/prepare_media.py work/game/RomFS/movie/ev0005.webm
+.venv/bin/python tools/prepare_media.py work/game/RomFS/movie --jobs 2
+.venv/bin/python tools/prepare_media.py work/game/RomFS/movie --check
 ```
 
-Additional scenes may require additional movie files; pass the original path reported by the host to the same tool. Caches stay in `work/media/`. The tool checks frame count, dimensions, timing and supported range metadata, but AVC is lossy and image/audio quality still needs inspection. A missing cache stops execution rather than replacing a movie with a blank scene.
+Caches and their inventory stay in `work/media/`. Conversion verifies frame count, dimensions, timing and supported range metadata before atomically publishing each cache and its checksummed receipt. Valid caches are reused on retry. AVC is lossy and image/audio quality still needs inspection. Launch checks every original and cache checksum by default, preventing a later chapter from aborting for an unprepared movie. `--skip-media-preflight` is an explicit diagnostic exception; it does not make missing caches playable. A single original file is also accepted for targeted repair. No game data is downloaded or uploaded.
 
 ## 4. Bootstrap your own shaders
 
@@ -88,6 +88,19 @@ This enables Apple's Metal HUD and console statistics for the child process. `--
 
 Use `--trace-fs` or `--trace-nvn` when diagnosing a specific failure. Keep logs private and share only a redacted error summary. Do not report capture-mode output or process lifetime as a playable result. Opening-scene HUD figures do not represent combat or whole-game performance.
 
+For combat and chapter-transition diagnostics:
+
+```sh
+.venv/bin/python tools/run_mac.py --seconds 0 --metal-hud --profile
+.venv/bin/python tools/analyze_run.py work/run/log/native-YOUR-RUN.log
+```
+
+Each launch writes a raw `.log`, media `.preflight.json`, `.session.json` (host/shader identity and options), `.events.jsonl`, and an exit `.summary.json`. The parent records native crashes even when the host aborts. Exit summaries distinguish missing media, shader/pipeline failures, native crashes and diagnostic timeouts; none imply gameplay passed. `--profile` adds per-frame `.frames.tsv`, slow-frame diagnostics and depth-copy counts/transfer volume. Frame TSV defaults to a 32 MiB cap (`--profile-log-mib 1..256`); reaching it is logged and ordinary summary windows continue. The analyzer writes a private `.analysis.json`; a capped prefix is not a whole-session performance measurement.
+
+Optional `--gpu-profile --gpu-profile-every 60` records sampled Metal 4 render/compute/blit encoder timestamps in `.passes.tsv` (32 MiB cap). Precise timestamp probes can split encoders and change performance, so use a separate run from FPS comparisons. Encoder spans can overlap and must not be added together. A span of `-1` means no usable timestamp, including empty/clear-only render passes; it does not mean zero GPU cost. All diagnostics and captures remain under ignored `work/`.
+
+The Metal 4 path batches GPU indirect-count preparation across proven read-only command segments. Counts remain GPU-resident; draws, graphics quality and game logic are preserved. Copies, uploads, compute, clears, events, queries, attachment changes, unknown reflection and possible input aliases end a batch. `--indirect-batch 0` selects the original preparation path for comparison. For a same-process diagnostic A/B, pass `--indirect-batch-control work/run/batch-policy.txt`; write `0` or `1` to that local file. It is polled every 60 frames, and changes are logged with a frame number. Keep camera/scene and HUD/probe settings the same, discard transition windows, and compare `@frame_ms`, `@gpu_ms`, `@passes` and `@indirect_batch_*` metrics. Do not compare a precise-probe run with a normal FPS run.
+
 ## 6. Experimental iOS builds
 
 Only proceed after completing the Mac capture/strict-run cycle. Compile the observed-path iPhoneOS shaders and make an unsigned build:
@@ -119,3 +132,5 @@ python3 tools/audit_public.py --all-history
 ```
 
 The first two use synthetic inputs, not game files. The audit checks Git's staged/index content and, with `--all-history`, reachable historical blobs. Never force-add `work/`, keys, captures, packages or game content. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+The shader build now decodes **all captured fragment inputs**, even with `--used-only`, and gives vertex shaders a complete compatible varying interface. It checks the actual generated graphics interfaces and writes a private `_interfaces.json` integrity receipt. Normal Mac startup checks that receipt and the libraries; after a preflight failure, rebuild the shaders and host. This avoids collecting every possible stage pairing merely to link a new scene. Previously uncaptured programs and unsupported tessellation stages remain separate limitations. All receipts and game-derived libraries stay under ignored `work/`.

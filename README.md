@@ -16,13 +16,13 @@ Developer observations as of **2026-10-17**; a research preview, not a finished 
 
 | Area | What has actually been verified |
 |---|---|
-| macOS, Apple silicon | Native startup, title/menu, opening real-time 3D, left/right movement, turning and action feedback |
-| NVN / graphics | Targeted NVN **55.12** compatibility, Metal rendering, offline translation of supported shader stages |
-| Performance | Metal HUD works. Selected opening-scene samples are near 60 FPS, GPU median roughly 11–12 ms; frame drops and a long pause also occurred. This is not a steady-60-FPS claim or a whole-game benchmark |
-| iOS | Unsigned source build and observed-path shaders compile. Signing/install and real-device gameplay have **not** been verified |
-| Still unverified | Complete combat and chapters, audio quality, save round trips, later rendering paths and device lifecycle |
+| macOS, Apple silicon | Native startup, title/menu, real combat and user-confirmed progression into a new scene; controller operation confirmed |
+| NVN / graphics | Targeted NVN **55.12**, Metal rendering and a corpus-wide shader interface covering 2,007 vertex / 4,212 fragment programs |
+| Performance | On M3 Max, in-process ON → OFF → ON testing measured about **60 → 18 → 60 FPS** in combat. The later scene run passed 181 new stage pairs without fatal pipeline errors. See [performance measurements](docs/PERFORMANCE.md); this is not a whole-game benchmark |
+| iOS | An earlier unsigned build and observed-path shaders compile. The latest Mac changes, signed install and real-device gameplay have **not** been verified on iOS |
+| Still unverified | Complete chapters, long-term stability, audio quality, save round trips, all rendering paths and device lifecycle |
 
-Known issues include material/hair/transparency artifacts, performance variation, and unsupported tessellation stages. A local batch compiled 6,293 supported-stage shaders; 11 tessellation captures remain unsupported. This does not establish complete shader or game compatibility. Local evidence paths and limitations are recorded in [STATUS.md](docs/STATUS.md); private logs and captures are intentionally not published.
+Known issues include material/hair/transparency artifacts, performance variation, and unsupported tessellation stages. All 2,007 vertex libraries passed real Metal pipeline creation against the complete varying interface, and an approximately 11-minute native scene test exited normally. A local batch compiled 6,293 supported-stage shaders; 11 tessellation captures remain unsupported. This does not establish complete shader or game compatibility. Local evidence paths and limitations are recorded in [STATUS.md](docs/STATUS.md); private logs and captures are intentionally not published.
 
 ## How it works
 

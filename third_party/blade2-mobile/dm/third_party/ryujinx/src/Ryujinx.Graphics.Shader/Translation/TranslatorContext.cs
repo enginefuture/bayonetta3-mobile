@@ -174,6 +174,15 @@ namespace Ryujinx.Graphics.Shader.Translation
             Definitions.LastInVertexPipeline = true;
         }
 
+        public UInt128 InputAttributeComponents => AttributeUsage.ThisInputAttributesComponents;
+
+        public void RequireVertexOutputComponents(UInt128 components)
+        {
+            if (Stage != ShaderStage.Vertex)
+                throw new InvalidOperationException("Complete varying ABI requires a vertex shader");
+            AttributeUsage.RequireOutputComponents(components);
+        }
+
         public void SetNextStage(TranslatorContext nextStage)
         {
             AttributeUsage.MergeFromtNextStage(

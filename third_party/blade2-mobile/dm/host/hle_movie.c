@@ -117,6 +117,7 @@ static void bayo_movie_cache(char *path,size_t cap){
     int bad=ferror(f);fclose(f);free(block);if(bad)die("movie source read failed: %s",path);CC_SHA256_Final(digest,&context);
     char hash[65];for(int i=0;i<32;i++)snprintf(hash+2*i,3,"%02x",digest[i]);
     char converted[1024];snprintf(converted,sizeof converted,"%s/%s.mp4",cache,hash);
+    LOG("[media-cache] request source=%s sha256=%s",path,hash);
     f=fopen(converted,"rb");if(!f)die("prepared H.264 movie missing for source %s (sha256 %s)",path,hash);fclose(f);
     LOG("movie: original WebM -> prepared native AVC cache %s",hash);strlcpy(path,converted,cap);
 }

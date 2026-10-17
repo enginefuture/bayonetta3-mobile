@@ -1,14 +1,14 @@
 {
   "date": "2026-10-17",
   "macos_build": "passed",
-  "ios_unsigned_build": "passed current NVN55 sources; IOS min26.0, SDK27.0; 507 base shaders +95 variants packaged",
+  "ios_unsigned_build": "Earlier source snapshot passed; 507 base shaders +95 variants. Latest Mac unified chain not rebuilt/validated for iOS",
   "ios_device_test": "not_run; development signing blocked by Xcode No Accounts / missing profile",
-  "python_regressions_passed": 15,
+  "python_regressions_passed": 29,
   "native_c_adapter_tests": "passed",
   "rewrite_verification_passed": true,
-  "native_stage": "Strict native 3D opening; observed left/right movement, reversal and action response; full combat/chapter not verified",
-  "native_final_log": "work/run/log/native-20261017-061315.log",
-  "native_exit_code": 142,
+  "native_stage": "Strict native combat and user-confirmed new scene progression; full chapters unverified",
+  "native_final_log": "work/run/log/native-20261017-123809-43769.log",
+  "native_exit_code": 0,
   "nvn_required": {
     "major": 55,
     "minimum_minor": 12
@@ -70,25 +70,25 @@
   },
   "descriptor_pool_namespace_tests": "passed",
   "full_supported_shader_build": {
-    "chain": "88457687d11e",
+    "chain": "220ab21bd6d9",
     "passed": 6293,
     "failed": 0,
     "unsupported_tessellation": 11,
-    "scope": "current frozen graphics-pair snapshot; 386 edges; fragment lowering and final observed texture facts",
-    "log": "work/build-shaders-stagepairs.log"
+    "scope": "All captured fragment inputs; complete separate-stage varying ABI",
+    "log": "work/build-shaders-varying-abi.log"
   },
-  "native_movie_status": "Prepared original VP9 codec caches for ev0000/ev0005/ev0010/ev0011; native NV12 buffers consumed; not gameplay evidence",
-  "native_final_exit_reason": "explicit 275-second watchdog; not a success exit",
+  "native_movie_status": "All 478 original movies/cache hashes passed startup preflight; chapter movie ending reached combat",
+  "native_final_exit_reason": "normal_exit; no fatal pipeline errors; this alone does not certify gameplay",
   "program_stage_binding_tests": "passed",
   "metal_stored_depth_test_pixels_passed": 24,
   "metal_indirect_count_cases_passed": 8,
   "metal_attachmentless_cases_passed": 3,
   "native_opening_scene_verified": true,
-  "native_battle_verified": false,
-  "current_strict_run": "completed 275-second controlled run",
-  "latest_diagnostic_run": "work/run/log/native-20261017-054404.log (capture; aborted at ~110s; missing f52b653a375ef527, depth-bounds stage guard)",
+  "native_battle_verified": true,
+  "current_strict_run": "Completed 696.86 seconds; observed scene transition confirmed by user",
+  "latest_diagnostic_run": "work/run/log/native-20261017-123809-43769.log (strict; HUD on, GPU precise probes off)",
   "native_input_receipt": "work/run/log/native-20261017-061315.hid.jsonl",
-  "current_blocker": "Xcode has no configured developer account/profile for com.tabshi.bayonetta3mobile; user sign-in requested before signed device install",
+  "current_blocker": "Full-chapter stability and broader scene coverage; iOS signing/device run remain unverified",
   "shader_stage_pair_regressions": "passed",
   "actual_shader_pair_pipeline_test": {
     "old_chain": "1ca38b7dd723",
@@ -114,5 +114,49 @@
   "ios_artifact_receipt": "work/ios-build-validation.json",
   "ios_unsigned_build_log": "work/build-ios-unsigned-final.log",
   "ios_signing_log": "work/build-ios-sign-final.log",
-  "mac_public_vm_region_regression": "work/run/log/native-20261017-062211.log: 15-second title/menu smoke, explicit watchdog142, no NVN fatal"
+  "mac_public_vm_region_regression": "work/run/log/native-20261017-062211.log: 15-second title/menu smoke, explicit watchdog142, no NVN fatal",
+  "uniform_shader_interface": {
+    "vertex_libraries": 2007,
+    "fragment_programs_scanned": 4212,
+    "fragment_variants": 830,
+    "varying_locations": 14,
+    "actual_vertex_metal_pipeline_tests_passed": 2007,
+    "new_runtime_pairs": 181,
+    "new_pairs_incompatible_with_previous_cache": 7,
+    "fatal_pipeline_errors": 0,
+    "user_confirmed_scene_progression": true
+  },
+  "combat_performance": {
+    "hardware": "Apple M3 Max",
+    "hud": true,
+    "precise_gpu_probes": false,
+    "mode": "in-process ON / OFF / ON",
+    "median_frame_ms": [
+      16.655,
+      55.7615,
+      16.6585
+    ],
+    "gpu_ms": [
+      8.4015,
+      44.9075,
+      8.8395
+    ],
+    "render_passes": [
+      87,
+      646,
+      84
+    ],
+    "scope": "Evolving first-chapter battle; not full-game or fixed-workload benchmark"
+  },
+  "native_scene_progression_verified": true,
+  "public_source_validation": {
+    "snapshot": "Git index exported without game files",
+    "mac_native_build": "passed",
+    "vendored_translator_build": "passed",
+    "python_regressions": 29,
+    "c_regressions": "passed",
+    "metal_synthetic_groups": 6,
+    "git_index_and_all_reachable_history_audit": "passed; 985 blobs, 11.41 MiB before commit",
+    "private_logs": "work/publish/"
+  }
 }

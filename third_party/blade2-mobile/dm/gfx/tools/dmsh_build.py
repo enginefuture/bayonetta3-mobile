@@ -86,7 +86,7 @@ def shader_key(key, name, rec):
     map_row = MAP_ROWS.get(key, '缺'.encode()) + MAP_CONFLICT_ROWS.get(key, b'')
     embedded = rec if name.startswith('main.rodata@') else b''
     payload = (b'record\0' + rec + b'\0map\0' + map_row + b'\0pc\0' + pc + b'\0embedded\0' + embedded + b'\0pairs\0' + ','.join(sorted(PAIRS.get(key, ()))).encode() + b'\0gs\0' + ','.join(sorted(PAIRS_GS.get(key, ()))).encode() +
-               b'\0tools\0' + TOOL_FP + b'\0code\0' + CODE_FP.encode() +
+               b'\0varyings\0' + str(COMPLETE_COMPONENTS).encode() + b'\0tools\0' + TOOL_FP + b'\0code\0' + CODE_FP.encode() +
                b'\0rule\0' + shader_rule_source(name))
     return hashlib.sha256(payload).hexdigest()
 
@@ -268,7 +268,9 @@ def job_for(key, name, rec, w):
          'debug': os.environ.get('XLATE_DEBUG', '1') != '0', 'reduced': os.environ.get('XLATE_REDUCED', '1') == '1'}   # 翻译选项（见 dmsh_xlate/Program.cs）；放宽精度缺省开（GPU 浮点末位误差不进游戏状态，mini 整帧 −26%）   # c1：翻译器读间接跳转表用 | translation options (see dmsh_xlate/Program.cs); relaxed precision is on by default (GPU float last-bit error does not enter game state, whole frame −26% on the second Mac)   # c1: used by the translator to read indirect jump tables
     if key in FACTS: j.update(FACTS[key])
     else: j['pc_missing'] = True   # 作答表里没有：查询按缺省（汇总里单列） | not in the answer table: queries use defaults (listed separately in the summary)
-    if stage == 'vs' and key in PAIRS:
+    if stage == 'vs' and COMPLETE_COMPONENTS is not None:
+        j['output_components'] = COMPLETE_COMPONENTS
+    elif stage == 'vs' and key in PAIRS:
         j['next'] = []
         for fk in sorted(PAIRS[key]):
             if fk not in loc: continue
@@ -677,7 +679,7 @@ os.makedirs(out, exist_ok=True)
 w = tempfile.mkdtemp(prefix='dmsh_', dir=os.environ.get('WORK'))
 packs, jobs, c1s = {}, {}, {}
 digests, rule_fps, cache_reasons, cache_hits = {}, {}, {}, set()
-for key in keys:
+def load_record(key):
     name, k = loc[key]
     if name.startswith('main.rodata@'):
         if 'main' not in packs:
@@ -690,6 +692,26 @@ for key in keys:
     else:
         if name not in packs: packs[name] = records(open(os.path.join(dm_dir, name), 'rb').read())
         rec = packs[name][k]
+    return name, rec
+
+COMPLETE_COMPONENTS = None
+# Decode every captured fragment, including ones outside --used-only. Future
+# pairings can then use an ABI built before the scene is ever visited.
+if any(name.endswith('_bayonetta3.bin') for name, _ in loc.values()):
+    scan_jobs = []
+    for key in sorted(loc):
+        name, _ = loc[key]
+        if stage_of.get(key, name[:2]) != 'ps': continue
+        name, rec = load_record(key)
+        scan_jobs.append(job_for(key, name, rec, w)[0])
+    if not scan_jobs: sys.exit('No fragment programs for complete varying ABI')
+    jp = os.path.join(w, 'interface-jobs.json'); report = os.path.join(out, '_varying_scan.json')
+    json.dump(scan_jobs, open(jp, 'w'))
+    subprocess.run([XLATE, '--scan-interfaces', jp, report], check=True)
+    COMPLETE_COMPONENTS = json.load(open(report))['components']
+
+for key in keys:
+    name, rec = load_record(key)
     digests[key] = shader_key(key, name, rec)
     rule_fps[key] = hashlib.sha256(shader_rule_source(name)).hexdigest()
     hit, cache_reasons[key] = cache_lookup(key, digests[key], rule_fps[key], CODE_FP)

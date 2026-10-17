@@ -2,6 +2,21 @@
 #include "hle.h"
 #if DM_BAYONETTA3
 #include <stdatomic.h>
+// oe::MuteRecording/UnmuteRecording control audio in the platform's captured
+// clips, not AudioOut. The host exposes no Horizon clip recorder (see oe's
+// Enable/DisableRecording adapters). Keep this policy locally and never enter
+// the uninitialized SDK recording-service singleton or mute game playback.
+static _Atomic int bayo_recording_muted;
+HLE_FORCE("_ZN2nn2oe13MuteRecordingEv", "宿主无系统录像；记录录像静音策略，游戏声音不变", void,
+          h_bayo_MuteRecording, void) {
+    atomic_store_explicit(&bayo_recording_muted,1,memory_order_relaxed);
+    LOG("[recording-policy] muted=1 recorder=unavailable playback=unchanged");
+}
+HLE_FORCE("_ZN2nn2oe15UnmuteRecordingEv", "宿主无系统录像；恢复录像声音策略，游戏声音不变", void,
+          h_bayo_UnmuteRecording, void) {
+    atomic_store_explicit(&bayo_recording_muted,0,memory_order_relaxed);
+    LOG("[recording-policy] muted=0 recorder=unavailable playback=unchanged");
+}
 // Dedicated Switch USB keyboard/mouse devices are absent. The Mac keyboard is
 // mapped to Npad by the host frontend. ABI extents verified from SDK 13 stores:
 // KeyboardState [0,0x30); MouseState [0,0x28). Attributes stay disconnected.
