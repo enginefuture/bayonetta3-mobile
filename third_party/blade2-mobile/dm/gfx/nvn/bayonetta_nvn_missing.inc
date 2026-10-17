@@ -1,0 +1,12 @@
+// Missing SDK 13 entry points observed during Bayonetta 3 startup. Trap only.
+BAYO_NVN_TRAP(nvnProgramGetSubtileSize)
+BAYO_NVN_TRAP(nvnTextureBuilderGetViewOffset)
+BAYO_NVN_TRAP(nvnCommandBufferBindUniformBuffersDeferred)
+BAYO_NVN_TRAP(nvnCommandBufferBindStorageBuffersDeferred)
+BAYO_NVN_TRAP(nvnCommandBufferBindTexturesDeferred)
+BAYO_NVN_TRAP(nvnCommandBufferBindImagesDeferred)
+BAYO_NVN_TRAP(nvnCommandBufferBindSeparateTexturesDeferred)
+BAYO_NVN_TRAP(nvnCommandBufferBindSeparateSamplersDeferred)
+BAYO_NVN_TRAP(nvnCommandBufferOverrideSubtileSize)
+BAYO_NVN_TRAP(nvnCommandBufferSetZCullZF32CompressionEnable)
+BAYO_NVN_TRAP(nvnDeviceSetAutomaticCheckpointsMask)

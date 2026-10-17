@@ -1,0 +1,118 @@
+{
+  "date": "2026-10-17",
+  "macos_build": "passed",
+  "ios_unsigned_build": "passed current NVN55 sources; IOS min26.0, SDK27.0; 507 base shaders +95 variants packaged",
+  "ios_device_test": "not_run; development signing blocked by Xcode No Accounts / missing profile",
+  "python_regressions_passed": 15,
+  "native_c_adapter_tests": "passed",
+  "rewrite_verification_passed": true,
+  "native_stage": "Strict native 3D opening; observed left/right movement, reversal and action response; full combat/chapter not verified",
+  "native_final_log": "work/run/log/native-20261017-061315.log",
+  "native_exit_code": 142,
+  "nvn_required": {
+    "major": 55,
+    "minimum_minor": 12
+  },
+  "nvn_inherited_backend": {
+    "major": 53,
+    "minor": 311
+  },
+  "gameplay_verified": false,
+  "shader_capture_count": 6304,
+  "limitations": [
+    "Equivalence harness replaces exclusives on both sides; monitor/concurrency semantics require separate native tests.",
+    "Rewrite correctness does not prove SDK ABI, shader or gameplay compatibility."
+  ],
+  "modules": {
+    "main": {
+      "structck.py": 0,
+      "equiv.py": 0,
+      "patched.bin_sha256": "9ddc94ed70285e87ba067ad2858febfc33346642b219f97b0d0f857b51a5ff60",
+      "fixups.tsv_sha256": "f81303f4c821d54a9f2840b63307963284d509e12fc1b950e96b23140e6dd068",
+      "gates.tsv_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sites.tsv_sha256": "9ccc2740f8ca2b1287bf78b8839a3f20d4eb1937e7c70f67bcfa74d942ffc1d1",
+      "cuts.tsv_sha256": "a9b2fac6958616ef6419ab324d933c64d78053eae8427d01387bf211aafe4d7c"
+    },
+    "subsdk0": {
+      "structck.py": 0,
+      "equiv.py": 0,
+      "patched.bin_sha256": "348ec2d088bff83c9bc72905b239c94a1f471bf06cc499b16a1de8435675f9e2",
+      "fixups.tsv_sha256": "c79594999aa51386a24b1ea01d0e7b9e6f232f48c31f270a1adfec1437411256",
+      "gates.tsv_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sites.tsv_sha256": "3c4bfcc1f67866dbf9abc4574ee2de055f96f5ac9c8b2f1c7b1e3059d7c6e891",
+      "cuts.tsv_sha256": "5b0500cd8089c81c0fb6ac422f98013643664d4dbe762d9cec6a3f8cac0c7b99"
+    },
+    "sdk": {
+      "structck.py": 0,
+      "equiv.py": 0,
+      "patched.bin_sha256": "ad72aea69a60a0debd6e0dc34aee10bb4d1308c5509ebb8ccc97aaca37ce317f",
+      "fixups.tsv_sha256": "39a84adab53a5f14ee2ed2b4988fd98f947ee4bbbd19c1671b93ebfaa100aa44",
+      "gates.tsv_sha256": "46d99e595519e23c373b4772a0769707a595cb10db5dc52c9bae6535edc871e8",
+      "sites.tsv_sha256": "33fcb2ad65a89a7e7b7692eec0932479b8a579ada022cfe739567d5aed1e48f4",
+      "cuts.tsv_sha256": "d00de4e2daf2ac237c7692d39cfca4c87ce425be46486a304b5a41723eb70e50"
+    }
+  },
+  "nvn55_object_view_canaries": "passed",
+  "nvn55_deferred_tests": "passed",
+  "texture_region_tests": "passed",
+  "metal_alpha_test_cases_passed": 32,
+  "shader_capture_supported": 6293,
+  "shader_capture_invalid": 0,
+  "shader_capture_unsupported": {
+    "tcs": 5,
+    "tes": 6
+  },
+  "shader_capture_truncation_repaired": true,
+  "nvn_target_contract": {
+    "major": 55,
+    "minor": 12,
+    "coverage": "documented subset; unknown calls abort"
+  },
+  "descriptor_pool_namespace_tests": "passed",
+  "full_supported_shader_build": {
+    "chain": "88457687d11e",
+    "passed": 6293,
+    "failed": 0,
+    "unsupported_tessellation": 11,
+    "scope": "current frozen graphics-pair snapshot; 386 edges; fragment lowering and final observed texture facts",
+    "log": "work/build-shaders-stagepairs.log"
+  },
+  "native_movie_status": "Prepared original VP9 codec caches for ev0000/ev0005/ev0010/ev0011; native NV12 buffers consumed; not gameplay evidence",
+  "native_final_exit_reason": "explicit 275-second watchdog; not a success exit",
+  "program_stage_binding_tests": "passed",
+  "metal_stored_depth_test_pixels_passed": 24,
+  "metal_indirect_count_cases_passed": 8,
+  "metal_attachmentless_cases_passed": 3,
+  "native_opening_scene_verified": true,
+  "native_battle_verified": false,
+  "current_strict_run": "completed 275-second controlled run",
+  "latest_diagnostic_run": "work/run/log/native-20261017-054404.log (capture; aborted at ~110s; missing f52b653a375ef527, depth-bounds stage guard)",
+  "native_input_receipt": "work/run/log/native-20261017-061315.hid.jsonl",
+  "current_blocker": "Xcode has no configured developer account/profile for com.tabshi.bayonetta3mobile; user sign-in requested before signed device install",
+  "shader_stage_pair_regressions": "passed",
+  "actual_shader_pair_pipeline_test": {
+    "old_chain": "1ca38b7dd723",
+    "old_result": "rejected missing locn2",
+    "new_chain": "88457687d11e",
+    "new_result": "Metal pipeline creation passed",
+    "logs": [
+      "work/interface-before.log",
+      "work/interface-after.log"
+    ]
+  },
+  "speculative_state_fix": "Stage bindings part of copied S; Bayonetta predictor restores R including scissor. Snapshot/key tests passed; strict 275-second native control run completed.",
+  "combination_cache_performance": {
+    "sample": "work/run/state-restored-sample.txt",
+    "observation": "663/719 submit-thread samples in linear stage-combination lookup",
+    "fix": "canonical pointer/generation/shader-index key in existing open-addressing hash map",
+    "native_verification": "Native opening at ~60 FPS; frame 5700 last300 median16.66ms / submit3.04ms / GPU10.36ms; heavy later scene slower"
+  },
+  "native_basic_control_verified": true,
+  "native_control_evidence": "work/run/control-evidence.json",
+  "ios_signing": "failed; No Accounts and no iOS development profile for com.tabshi.bayonetta3mobile",
+  "ios_unsigned_artifact": "work/ios/Build/Products/Debug-iphoneos/Bayonetta3.app",
+  "ios_artifact_receipt": "work/ios-build-validation.json",
+  "ios_unsigned_build_log": "work/build-ios-unsigned-final.log",
+  "ios_signing_log": "work/build-ios-sign-final.log",
+  "mac_public_vm_region_regression": "work/run/log/native-20261017-062211.log: 15-second title/menu smoke, explicit watchdog142, no NVN fatal"
+}

@@ -1,0 +1,30 @@
+{
+  "title_id": "01004a4010fea000",
+  "version": "1.2.0",
+  "runtime_modules": [
+    "main",
+    "subsdk0",
+    "sdk"
+  ],
+  "romfs_marker": "core_000.pkz",
+  "status": "unverified-native-port",
+  "modules": {
+    "main": {
+      "build_id": "b47cc79b88b7091ea514b2b725c50ae01c6f00df000000000000000000000000",
+      "sha256": "499983f6adabc071488be7fe75f547c079c8c8dac95c3573e78a4277d7641800"
+    },
+    "sdk": {
+      "build_id": "357efc198e728cb5d55265aff304f03cfc9cc0e3000000000000000000000000",
+      "sha256": "2a89fa1c0e677710e89ed29b578162affef530a0c9b8c93cda15d50a57a20d28"
+    },
+    "subsdk0": {
+      "build_id": "a8cb97803f7f442a3b6cce1c7cd4ee4a78b7def3000000000000000000000000",
+      "sha256": "f38d30e8241ee208cbf3090f44613e328af517ad199eb5985619416bb2cbcb55"
+    }
+  },
+  "required_nvn_api": {
+    "major": 55,
+    "minimum_minor": 12,
+    "evidence": "main+0xd176c8, main+0xd176d4; main build ID b47cc79b88b7091ea514b2b725c50ae0"
+  }
+}

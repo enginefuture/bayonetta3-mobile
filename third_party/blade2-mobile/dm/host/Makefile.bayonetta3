@@ -1,0 +1,48 @@
+# Bayonetta 3 native-host experiment; derived from Makefile.blade (MIT).
+# Blade II 宿主（Mac）：d2r-mobile 宿主的通用部分 + Blade 适配，不带任何 D2R 功能文件（dm_*.c / diag.c / touch_mac.c）。
+# 用法：make -f Makefile.blade            → dmhost_bayonetta3
+#       make -f Makefile.blade run        → 跑游戏（需 DM_ROMFS / DM_SAVE / DM_TEMP / DM_OUT，见下）
+# Blade II host (Mac): the generic part of the d2r-mobile host + the Blade adaptation, without any D2R feature file (dm_*.c / diag.c / touch_mac.c).
+# Usage: make -f Makefile.blade           → dmhost_bayonetta3
+#        make -f Makefile.blade run       → run the game (needs DM_ROMFS / DM_SAVE / DM_TEMP / DM_OUT, see below)
+MACOS_MIN ?= 26.0
+CFLAGS=-O1 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN) -DAPP_NAME='"Bayonetta 3 Mobile"' -DDM_ROMFS_MARKER='"core_000.pkz"' -DDM_FORCE_LOOSE=1 -DDM_GENERIC_HOST=1 -DDM_UNIMPL_ABORT=1 -DDM_BAYONETTA3=1 -DDM_ARGV0='"Bayonetta3"' -DDM_PROGRAM_ID=0x01004a4010fea000ull
+SRC=app_mac.m crash.c entry.S front_mac.m hle.c loader.c main.c memstat.m romfs_validate.c thread.c \
+    blade_stubs.c sampler_blade.c gamepad_generic.m audio_session.m movie_av.m \
+    $(sort $(wildcard hle_*.c))
+GFX=$(sort $(wildcard ../gfx/*.c ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S ../gfx/tex/*.c ../gfx/tex/*.m))
+GFX_H=$(sort $(wildcard ../gfx/nvn/*.h ../gfx/nvn/include/*.h ../gfx/tex/*.h))
+GFX_H+=$(sort $(wildcard ../gfx/nvn/*.inc))
+LIBDEFLATE=../third_party/libdeflate/lib/deflate_decompress.c ../third_party/libdeflate/lib/zlib_decompress.c ../third_party/libdeflate/lib/adler32.c ../third_party/libdeflate/lib/utils.c ../third_party/libdeflate/lib/arm/cpu_features.c
+FRAMEWORKS=-framework Cocoa -framework QuartzCore -framework Metal -framework AudioToolbox -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network -framework AVFoundation -framework CoreMedia -framework CoreVideo
+.DEFAULT_GOAL := dmhost_bayonetta3
+# Dependency-tracked objects stay outside the vendored source tree.
+OBJDIR := ../../../../work/build/macos-objects
+ALL_SRC := $(sort $(SRC) $(GFX) $(LIBDEFLATE))
+obj = $(OBJDIR)/$(subst ../,up/,$(1)).o
+OBJECTS := $(foreach s,$(ALL_SRC),$(call obj,$(s)))
+define compile_source
+$(call obj,$(1)): $(1) Makefile.bayonetta3
+	@mkdir -p $$(@D)
+	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -MMD -MP -c $(1) -o $$@
+endef
+$(foreach s,$(ALL_SRC),$(eval $(call compile_source,$(s))))
+-include $(OBJECTS:.o=.d)
+dmhost_bayonetta3: $(OBJECTS)
+	clang -mmacosx-version-min=$(MACOS_MIN) -o $@ $(OBJECTS) $(FRAMEWORKS)
+# 运行：DM_OUT = 改写产物目录（main/sdk 的 .patched.bin 等），DM_ROMFS = Update/RomFS，DM_SAVE = 存档目录（必须），DM_TEMP = 临时目录
+# Run: DM_OUT = rewrite build output dir (.patched.bin etc. of main/sdk), DM_ROMFS = Update/RomFS, DM_SAVE = save dir (required), DM_TEMP = temp dir
+DM_WATCH ?= 120
+run: dmhost_bayonetta3
+	@test -n "$(DM_OUT)" || { echo "set DM_OUT=<rewrite build output dir>"; exit 1; }
+	DM_WINDOW=$${DM_WINDOW:-1} DM_WATCH=$(DM_WATCH) ./dmhost_bayonetta3 "$(DM_OUT)" main subsdk0 sdk
+# 内嵌映像版（验 iOS 装载路径）：make -f Makefile.blade embed EMBED_S=<dm/ios/tools/gen_embed.py 出的 .S> [EMBED_LD='<它打印的 -segprot 参数>']
+# 出 dmhost_bayonetta3_embed：改写映像编在可执行文件的段里，装载器走 loader.c 的 iOS 分支（vm_remap 回原布局），产物目录只读表头 / 门表。跑法同上，DM_HOST_BIN=dmhost_bayonetta3_embed tools/run_mac.sh …
+# Embedded-image build (verifies the iOS load path): make -f Makefile.blade embed EMBED_S=<.S from dm/ios/tools/gen_embed.py> [EMBED_LD='<the -segprot flags it prints>']
+# Produces dmhost_bayonetta3_embed: the rewritten images are compiled into the executable's segments and the loader takes the iOS branch of loader.c (vm_remap back to the original layout); the build output dir is read only for table headers / gate tables. Run as above with DM_HOST_BIN=dmhost_bayonetta3_embed tools/run_mac.sh ...
+EMBED_LD ?= -Wl,-segprot,__DMmainW,rw,rw -Wl,-segprot,__DMsdkW,rw,rw
+embed: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h $(GFX_H)
+	@test -n "$(EMBED_S)" || { echo "set EMBED_S=<embed.S from gen_embed.py>"; exit 1; }
+	clang $(CFLAGS) -DDM_EMBED_IMAGE=1 -I. -I../gfx/nvn/include -fobjc-arc -o dmhost_bayonetta3_embed $(SRC) $(GFX) $(LIBDEFLATE) $(EMBED_S) $(FRAMEWORKS) $(EMBED_LD)
+clean:
+	rm -f dmhost_bayonetta3 dmhost_bayonetta3_embed

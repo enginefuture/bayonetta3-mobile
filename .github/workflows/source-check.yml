@@ -1,0 +1,25 @@
+name: Source checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  source-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 tools/audit_public.py --all-history
+      - run: pip install -r requirements.txt
+      - run: python3 -m unittest discover -s tests -v
+      - name: Synthetic C regressions
+        run: |
+          mkdir -p work
+          for name in hle nvn55 nvn55_objects descriptors program_bind; do
+            cc -std=gnu11 -Wall -Wextra -Wno-unused-function -Ithird_party/blade2-mobile/dm/gfx/nvn/include "tests/test_${name}.c" -o "work/test-${name}"
+            "work/test-${name}"
+          done

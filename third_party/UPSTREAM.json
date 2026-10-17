@@ -1,0 +1,14 @@
+{
+  "blade2-mobile": {
+    "url": "https://github.com/ha7rock/blade2-mobile",
+    "commit": "c981fcb62fe9962ca81d359f639bd05117bd03b4",
+    "license": "MIT",
+    "vendored_directory": "third_party/blade2-mobile",
+    "local_changes": "docs/UPSTREAM_CHANGES.md"
+  },
+  "d2r-mobile": {
+    "url": "https://github.com/jhaizhou-ops/d2r-mobile",
+    "relationship": "Inherited through blade2-mobile; not independently pinned",
+    "license_notice": "blade2-mobile/LICENSE.d2r-mobile"
+  }
+}
